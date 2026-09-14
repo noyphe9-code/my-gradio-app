@@ -9,8 +9,11 @@ import yt_dlp
 from google import genai
 
 
-SAVED_API_KEY = ""
+# =========================================================
+# SETTINGS
+# =========================================================
 
+SAVED_API_KEY = ""
 
 VOICES = {
     "Thiha (အမျိုးသားအသံ) - Natural": "my-MM-ThihaNeural",
@@ -27,13 +30,19 @@ def save_api_key(api_key):
 
     if api_key and api_key.strip():
         SAVED_API_KEY = api_key.strip()
-        return "✅ API Key ကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။"
 
-    return "⚠️ ကျေးဇူးပြု၍ မှန်ကန်သော Gemini API Key ထည့်ပါ။"
+        return (
+            "✅ Gemini API Key ကို အောင်မြင်စွာ "
+            "သိမ်းဆည်းပြီးပါပြီ။"
+        )
+
+    return (
+        "⚠️ ကျေးဇူးပြု၍ Gemini API Key ထည့်ပါ။"
+    )
 
 
 # =========================================================
-# CLEAN SCRIPT
+# SCRIPT CLEANER
 # =========================================================
 
 def clean_script_for_tts(script_text):
@@ -48,84 +57,131 @@ def clean_script_for_tts(script_text):
 
         line_str = line.strip()
 
+        if not line_str:
+            continue
+
+        # Remove visual / scene instructions
         if re.match(
-            r'^\[(Visual|Scene|Video|Audio).*?\]',
+            r"^\[(Visual|Scene|Video|Audio|Camera|Shot|Action).*?\]",
             line_str,
             re.IGNORECASE
         ):
             continue
 
-        if (
-            "recap script" in line_str.lower()
-            or "ဒီမှာ" in line_str
-            or line_str.startswith("---")
-        ):
+        # Remove markdown headings
+        if line_str.startswith("###"):
             continue
 
-        line_str = re.sub(
-            r'^[🎙️🗣️💬📢\s]*Narrator:\s*',
-            '',
-            line_str,
-            flags=re.IGNORECASE
-        )
+        if line_str.startswith("---"):
+            continue
 
-        line_str = re.sub(
-            r'^[🎙️🗣️💬📢\s]*\[.*?\]:\s*',
-            '',
-            line_str
-        )
+        # Remove common AI intro/outro
+        if "recap script" in line_str.lower():
+            continue
 
-        line_str = re.sub(
-            r'^[🎙️🗣️💬📢\s]*.*?:\s*',
-            '',
-            line_str
-        )
+        if line_str in [
+            "ဒီမှာ",
+            "အောက်တွင်",
+            "ဇာတ်လမ်းအကျဉ်း",
+            "Summary"
+        ]:
+            continue
 
+        # Remove markdown
         line_str = (
             line_str
             .replace("**", "")
-            .replace("#", "")
             .replace("__", "")
             .replace("`", "")
         )
 
+        # Remove explicit technical labels only
+        line_str = re.sub(
+            r"^\s*\[(Visual|Scene|Video|Audio|Camera|Shot|Action).*?\]\s*",
+            "",
+            line_str,
+            flags=re.IGNORECASE
+        )
+
+        # IMPORTANT:
+        # Do NOT remove Character dialogue.
+        #
+        # Example:
+        # မင်း ဘာလုပ်နေတာလဲ?
+        #
+        # will remain unchanged.
+
         if line_str.strip():
-            cleaned_lines.append(line_str.strip())
+            cleaned_lines.append(
+                line_str.strip()
+            )
 
     return "\n".join(cleaned_lines)
 
 
 # =========================================================
-# SRT
+# SRT TIME
+# =========================================================
+
+def seconds_to_srt_time(seconds):
+
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds - int(seconds)) * 1000)
+
+    return (
+        f"{hours:02d}:"
+        f"{minutes:02d}:"
+        f"{secs:02d},"
+        f"{millis:03d}"
+    )
+
+
+# =========================================================
+# GENERATE SRT + ZIP
 # =========================================================
 
 def generate_srt_and_zip(script_text):
 
-    clean_lines = clean_script_for_tts(script_text).split("\n")
+    clean_text = clean_script_for_tts(
+        script_text
+    )
+
+    lines = clean_text.split("\n")
 
     srt_content = ""
+
     start_sec = 0
     subtitle_index = 1
 
-    for line in clean_lines:
+    for line in lines:
 
-        if not line.strip():
+        line = line.strip()
+
+        if not line:
             continue
 
-        duration = max(3, len(line) // 10)
+        # Estimate subtitle duration
+        # Burmese text needs slightly more time
+        char_count = len(line)
+
+        duration = max(
+            2.5,
+            min(
+                8,
+                char_count / 9
+            )
+        )
 
         end_sec = start_sec + duration
 
-        start_time = (
-            f"{start_sec//3600:02d}:"
-            f"{(start_sec%3600)//60:02d}:"
-            f"{start_sec%60:02d},000"
+        start_time = seconds_to_srt_time(
+            start_sec
         )
 
-        end_time = (
-            f"{end_sec//3600:02d}:"
-            f"{(end_sec%3600)//60:02d}:"
-            f"{end_sec%60:02d},000"
+        end_time = seconds_to_srt_time(
+            end_sec
         )
 
         srt_content += (
@@ -137,27 +193,41 @@ def generate_srt_and_zip(script_text):
         subtitle_index += 1
         start_sec = end_sec
 
-    srt_filename = "myanmar_subtitle.srt"
-    zip_filename = "myanmar_subtitle.zip"
+    srt_filename = (
+        "myanmar_subtitle.srt"
+    )
+
+    zip_filename = (
+        "myanmar_subtitle.zip"
+    )
 
     with open(
         srt_filename,
         "w",
         encoding="utf-8-sig"
     ) as f:
+
         f.write(srt_content)
 
     with zipfile.ZipFile(
         zip_filename,
-        "w"
+        "w",
+        zipfile.ZIP_DEFLATED
     ) as zipf:
-        zipf.write(srt_filename)
 
-    return srt_filename, zip_filename
+        zipf.write(
+            srt_filename,
+            arcname=srt_filename
+        )
+
+    return (
+        srt_filename,
+        zip_filename
+    )
 
 
 # =========================================================
-# DOWNLOAD VIDEO
+# DOWNLOAD VIDEO FROM URL
 # =========================================================
 
 def download_video_from_link(link):
@@ -165,58 +235,86 @@ def download_video_from_link(link):
     if not link or not link.strip():
         return None
 
-    out_template = "temp_downloaded_video.%(ext)s"
+    output_template = (
+        "temp_downloaded_video.%(ext)s"
+    )
 
     ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "outtmpl": out_template,
+        "format":
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]"
+            "/best[ext=mp4]"
+            "/best",
+
+        "outtmpl": output_template,
+
         "quiet": True,
-        "overwrites": True
+
+        "no_warnings": True,
+
+        "overwrites": True,
+
+        "merge_output_format": "mp4"
     }
 
     try:
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(
+            ydl_opts
+        ) as ydl:
 
             info = ydl.extract_info(
                 link.strip(),
                 download=True
             )
 
-            filename = ydl.prepare_filename(info)
+            filename = ydl.prepare_filename(
+                info
+            )
 
+            # Sometimes merged file becomes .mp4
             if os.path.exists(filename):
                 return filename
 
+            base = os.path.splitext(
+                filename
+            )[0]
+
+            mp4_file = base + ".mp4"
+
+            if os.path.exists(mp4_file):
+                return mp4_file
+
     except Exception as e:
 
-        print(f"Download Error: {e}")
-
-        return None
+        print(
+            "Video Download Error:",
+            e
+        )
 
     return None
 
 
 # =========================================================
-# RATIO PREVIEW CSS + JS
+# PREVIEW RATIO CSS
 # =========================================================
 
-RATIO_PREVIEW_CSS = """
+RATIO_CSS = """
 <style>
 
 #tab1_preview_container {
     width: 100% !important;
     max-width: 650px !important;
-    margin: 0 auto !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
 }
 
 #tab1_preview_container .video-container {
     width: 100% !important;
-    height: auto !important;
-    aspect-ratio: 9 / 16 !important;
     background: #000 !important;
-    overflow: hidden !important;
     border-radius: 12px !important;
+    overflow: hidden !important;
+    aspect-ratio: 9 / 16 !important;
+    position: relative !important;
 }
 
 #tab1_preview_container video {
@@ -224,103 +322,164 @@ RATIO_PREVIEW_CSS = """
     height: 100% !important;
     object-fit: contain !important;
     background: #000 !important;
+    display: block !important;
 }
 
 </style>
 """
 
 
-RATIO_PREVIEW_JS = """
+# =========================================================
+# RATIO JAVASCRIPT
+# =========================================================
+
+RATIO_JS = """
 <script>
 
-function applyVideoRatio(ratio) {
+window.currentVideoRatio = "9:16";
 
-    const container =
-        document.querySelector(
-            '#tab1_preview_container .video-container'
-        );
 
-    if (!container) return;
+function getRatioSettings(ratio) {
 
-    const video =
-        container.querySelector('video');
+    if (ratio === "9:16") {
 
-    if (!video) return;
+        return {
+            aspect: "9 / 16",
+            maxWidth: "360px"
+        };
 
-    let aspect = '9 / 16';
-    let maxWidth = '360px';
-
-    if (ratio === '9:16') {
-        aspect = '9 / 16';
-        maxWidth = '360px';
     }
 
-    if (ratio === '3:4') {
-        aspect = '3 / 4';
-        maxWidth = '420px';
+    if (ratio === "3:4") {
+
+        return {
+            aspect: "3 / 4",
+            maxWidth: "420px"
+        };
+
     }
 
-    if (ratio === '1:1') {
-        aspect = '1 / 1';
-        maxWidth = '500px';
+    if (ratio === "1:1") {
+
+        return {
+            aspect: "1 / 1",
+            maxWidth: "500px"
+        };
+
     }
 
-    if (ratio === '16:9') {
-        aspect = '16 / 9';
-        maxWidth = '650px';
+    if (ratio === "16:9") {
+
+        return {
+            aspect: "16 / 9",
+            maxWidth: "650px"
+        };
+
     }
 
-    container.style.aspectRatio = aspect;
-    container.style.width = '100%';
-    container.style.maxWidth = maxWidth;
-
-    video.style.width = '100%';
-    video.style.height = '100%';
-    video.style.objectFit = 'contain';
+    return {
+        aspect: "9 / 16",
+        maxWidth: "360px"
+    };
 }
 
-function watchVideoPreview() {
 
-    const container =
+function applySelectedRatio() {
+
+    const root =
         document.querySelector(
-            '#tab1_preview_container'
+            "#tab1_preview_container"
         );
 
-    if (!container) return;
+    if (!root) {
+        return;
+    }
+
+    const container =
+        root.querySelector(
+            ".video-container"
+        );
+
+    if (!container) {
+        return;
+    }
+
+    const video =
+        container.querySelector(
+            "video"
+        );
+
+    const settings =
+        getRatioSettings(
+            window.currentVideoRatio
+        );
+
+    container.style.aspectRatio =
+        settings.aspect;
+
+    container.style.width =
+        "100%";
+
+    container.style.maxWidth =
+        settings.maxWidth;
+
+    container.style.height =
+        "auto";
+
+    if (video) {
+
+        video.style.width =
+            "100%";
+
+        video.style.height =
+            "100%";
+
+        video.style.objectFit =
+            "contain";
+    }
+}
+
+
+function watchPreviewChanges() {
+
+    const root =
+        document.querySelector(
+            "#tab1_preview_container"
+        );
+
+    if (!root) {
+        return;
+    }
 
     const observer =
-        new MutationObserver(function() {
+        new MutationObserver(
+            function() {
 
-            const video =
-                container.querySelector('video');
-
-            if (video) {
-
-                const selected =
-                    document.querySelector(
-                        'input[name="ratio_picker"]'
-                    );
-
-                applyVideoRatio(
-                    window.currentSelectedRatio || '9:16'
+                setTimeout(
+                    applySelectedRatio,
+                    100
                 );
-            }
 
-        });
+            }
+        );
 
     observer.observe(
-        container,
+        root,
         {
             childList: true,
             subtree: true
         }
     );
+
+    setInterval(
+        applySelectedRatio,
+        500
+    );
 }
 
-window.currentSelectedRatio = '9:16';
 
 setTimeout(
-    watchVideoPreview,
+    watchPreviewChanges,
     500
 );
 
@@ -329,100 +488,152 @@ setTimeout(
 
 
 # =========================================================
-# RATIO EVENT HTML
+# CHANGE RATIO
 # =========================================================
 
-def ratio_change_html(ratio):
+def change_ratio(ratio):
 
-    safe_ratio = ratio or "9:16"
+    ratio = ratio or "9:16"
 
-    return f"""
-    <div style="display:none"
-         data-selected-ratio="{safe_ratio}">
+    if ratio == "9:16":
+
+        aspect = "9 / 16"
+        max_width = "360px"
+
+    elif ratio == "3:4":
+
+        aspect = "3 / 4"
+        max_width = "420px"
+
+    elif ratio == "1:1":
+
+        aspect = "1 / 1"
+        max_width = "500px"
+
+    elif ratio == "16:9":
+
+        aspect = "16 / 9"
+        max_width = "650px"
+
+    else:
+
+        aspect = "9 / 16"
+        max_width = "360px"
+
+    html = f"""
+    <div style="display:none">
+        Ratio: {ratio}
     </div>
 
     <script>
 
-    window.currentSelectedRatio = "{safe_ratio}";
+    window.currentVideoRatio =
+        "{ratio}";
 
-    function updateRatioNow() {{
+    function updateVideoRatio() {{
+
+        const root =
+            document.querySelector(
+                "#tab1_preview_container"
+            );
+
+        if (!root) return;
 
         const container =
-            document.querySelector(
-                '#tab1_preview_container .video-container'
+            root.querySelector(
+                ".video-container"
             );
 
         if (!container) return;
 
         const video =
-            container.querySelector('video');
+            container.querySelector(
+                "video"
+            );
 
-        if (!video) return;
+        container.style.aspectRatio =
+            "{aspect}";
 
-        let aspect = '9 / 16';
-        let maxWidth = '360px';
+        container.style.width =
+            "100%";
 
-        if ("{safe_ratio}" === "9:16") {{
-            aspect = '9 / 16';
-            maxWidth = '360px';
+        container.style.maxWidth =
+            "{max_width}";
+
+        container.style.height =
+            "auto";
+
+        if (video) {{
+
+            video.style.width =
+                "100%";
+
+            video.style.height =
+                "100%";
+
+            video.style.objectFit =
+                "contain";
+
         }}
 
-        if ("{safe_ratio}" === "3:4") {{
-            aspect = '3 / 4';
-            maxWidth = '420px';
-        }}
-
-        if ("{safe_ratio}" === "1:1") {{
-            aspect = '1 / 1';
-            maxWidth = '500px';
-        }}
-
-        if ("{safe_ratio}" === '16:9') {{
-            aspect = '16 / 9';
-            maxWidth = '650px';
-        }}
-
-        container.style.aspectRatio = aspect;
-        container.style.maxWidth = maxWidth;
-        container.style.width = '100%';
-
-        video.style.width = '100%';
-        video.style.height = '100%';
-        video.style.objectFit = 'contain';
     }}
 
-    let attempts = 0;
+    let ratioAttempts = 0;
 
-    const timer = setInterval(() => {{
+    const ratioTimer =
+        setInterval(
+            function() {{
 
-        updateRatioNow();
+                updateVideoRatio();
 
-        attempts++;
+                ratioAttempts++;
 
-        if (attempts > 30) {{
-            clearInterval(timer);
-        }}
+                if (
+                    ratioAttempts > 40
+                ) {{
+                    clearInterval(
+                        ratioTimer
+                    );
+                }}
 
-    }}, 200);
+            }},
+            150
+        );
 
     </script>
     """
 
+    return html
+
 
 # =========================================================
-# LOAD LINK
+# VIDEO FILE → PREVIEW
 # =========================================================
 
-def load_tab1_link(link):
+def preview_uploaded_video(video):
+
+    if not video:
+        return None
+
+    return video
+
+
+# =========================================================
+# LINK → PREVIEW
+# =========================================================
+
+def load_video_link(link):
 
     if not link or not link.strip():
         return None
 
-    return download_video_from_link(link)
+    return download_video_from_link(
+        link
+    )
 
 
 # =========================================================
-# ANALYZE VIDEO
+# VIDEO → MOVIE RECAP SCRIPT
 # =========================================================
 
 def analyze_and_generate_script(
@@ -433,34 +644,59 @@ def analyze_and_generate_script(
 
     global SAVED_API_KEY
 
+    # -----------------------------------------
+    # API KEY CHECK
+    # -----------------------------------------
+
     if not SAVED_API_KEY:
 
         return (
             "",
-            "⚠️ API Key မရှိသေးပါ။ "
-            "ကျေးဇူးပြု၍ API Key Setting တွင် API Key ထည့်ပါ။",
+            "⚠️ Gemini API Key မရှိသေးပါ။ "
+            "API Key Setting မှာ အရင်ထည့်ပါ။",
             None,
             None
         )
 
-    target_media = (
-        video_file
-        if video_file
-        else download_video_from_link(video_link)
-    )
+
+    # -----------------------------------------
+    # VIDEO
+    # -----------------------------------------
+
+    target_media = None
+
+    if video_file:
+
+        target_media = video_file
+
+    elif video_link:
+
+        target_media = (
+            download_video_from_link(
+                video_link
+            )
+        )
+
 
     if (
         not target_media
-        or not os.path.exists(target_media)
+        or not os.path.exists(
+            target_media
+        )
     ):
 
         return (
             "",
-            "⚠️ ဗီဒီယိုဖိုင်တင်ပါ "
-            "သို့မဟုတ် Link မှန်ကန်စွာထည့်ပါ။",
+            "⚠️ Video ဖိုင်တင်ပါ "
+            "သို့မဟုတ် Video Link မှန်ကန်စွာထည့်ပါ။",
             None,
             None
         )
+
+
+    # -----------------------------------------
+    # GEMINI CLIENT
+    # -----------------------------------------
 
     try:
 
@@ -472,63 +708,420 @@ def analyze_and_generate_script(
 
         return (
             "",
-            f"⚠️ Client Error: {str(e)}",
+            f"⚠️ Gemini Client Error: {str(e)}",
             None,
             None
         )
 
+
     selected_ratio = (
         ratio_choice
-        if ratio_choice
-        else "9:16"
+        or "9:16"
     )
+
+
+    # -----------------------------------------
+    # UPLOAD VIDEO
+    # -----------------------------------------
 
     try:
 
-        uploaded_file = client.files.upload(
-            file=target_media
+        uploaded_file = (
+            client.files.upload(
+                file=target_media
+            )
         )
 
-        while uploaded_file.state.name == "PROCESSING":
+
+        while (
+            uploaded_file.state.name
+            == "PROCESSING"
+        ):
 
             time.sleep(3)
 
-            uploaded_file = client.files.get(
-                name=uploaded_file.name
+            uploaded_file = (
+                client.files.get(
+                    name=uploaded_file.name
+                )
             )
 
-        if uploaded_file.state.name == "FAILED":
+
+        if (
+            uploaded_file.state.name
+            == "FAILED"
+        ):
 
             return (
                 "",
-                "⚠️ Gemini ဘက်မှ ဗီဒီယိုဖတ်မရပါ။",
+                "⚠️ Gemini သို့ Video ပို့ပြီး "
+                "Analyze လုပ်ရာတွင် မအောင်မြင်ပါ။",
                 None,
                 None
             )
 
+
+        # =================================================
+        # PROFESSIONAL MOVIE RECAP PROMPT
+        # =================================================
+
         prompt = f"""
-သင်သည် မြန်မာ Movie Recapper တစ်ဦးဖြစ်သည်။
+သင်သည် TikTok, Facebook Reels နှင့်
+YouTube Shorts အတွက်
+Professional Myanmar Movie Recap Writer တစ်ဦးဖြစ်သည်။
 
-ပေးထားသော ဗီဒီယိုကို အစမှအဆုံး သေချာကြည့်ရှုပါ။
+ပေးထားသော VIDEO ကို အစမှအဆုံး သေချာကြည့်ရှုပါ။
 
-Aspect Ratio:
+Target Aspect Ratio:
 {selected_ratio}
 
-အောက်ပါစည်းမျဉ်းများအတိုင်း
-မြန်မာ Movie Recap Script ရေးပါ။
 
-1. Video ထဲတွင် တကယ်ဖြစ်ပျက်သောအရာကိုသာရေးပါ။
-2. ဇာတ်လမ်းမတီထွင်ပါနှင့်။
-3. Visual cue မရေးပါနှင့်။
-4. Scene / Visual / Audio label မထည့်ပါနှင့်။
-5. အသံထွက်ဖတ်ရန် သဘာဝကျသော မြန်မာစကားဖြင့်ရေးပါ။
-6. ဇာတ်လမ်းကို စိတ်ဝင်စားဖွယ် Movie Recap ပုံစံရေးပါ။
-7. ဇာတ်ကောင်ပြောသောစကားရှိလျှင် အဓိပ္ပာယ်မပျက်အောင်
-   မြန်မာလို သဘာဝကျကျရေးပါ။
-8. Video ထဲတွင်မရှိသော Dialogue မထည့်ပါနှင့်။
-9. Output သည် TTS အသံထုတ်ရန် အဆင်ပြေသော
-   plain Burmese text ဖြစ်ရမည်။
+==================================================
+အဓိကတာဝန်
+==================================================
+
+Video ထဲမှာ တကယ်ဖြစ်ပျက်တဲ့ ဇာတ်လမ်းကို
+အစကနေ အဆုံးအထိ အစဉ်လိုက် နားလည်ပြီး
+မြန်မာပရိသတ်တွေ နားထောင်ရင်း
+စိတ်ဝင်စားသွားအောင် Movie Recap Script ရေးပါ။
+
+ရိုးရိုး Summary မရေးပါနှင့်။
+
+Video ကို ကိုယ်တိုင်ကြည့်နေသလို ခံစားရအောင်—
+
+Visual ဖြစ်ရပ်
++
+Narrator ပြောစကား
++
+ဇာတ်ကောင်များ၏ အပြန်အလှန်ပြောစကား
++
+စိတ်ခံစားချက်
++
+Suspense
++
+Story Flow
+
+တို့ကို သဘာဝကျကျ ပေါင်းစပ်ရေးပါ။
+
+
+==================================================
+1. VIDEO ကို အရင်ဆုံး နားလည်ပါ
+==================================================
+
+Video ထဲက—
+
+• ဘယ်သူတွေပါလဲ
+• ဘယ်သူက ဘယ်သူနဲ့ဆက်စပ်လဲ
+• ဘယ်နေရာမှာဖြစ်လဲ
+• ဘယ်သူဘာလုပ်လဲ
+• ဘာကြောင့်လုပ်လဲ
+• ဘာတွေဖြစ်လာလဲ
+• ဇာတ်ကောင်တွေရဲ့ စိတ်ခံစားချက်
+• ပြဿနာ
+• အန္တရာယ်
+• ပဋိပက္ခ
+• အရေးကြီးတဲ့အပြောင်းအလဲ
+• Climax
+• Ending
+
+တို့ကို Video ထဲက အချက်အလက်အတိုင်း
+နားလည်ပါ။
+
+
+==================================================
+2. VISUAL STORYTELLING
+==================================================
+
+Video ထဲမှာ တကယ်မြင်ရတဲ့ Action တွေကို
+ကြည့်ရှုသူက မျက်စိရှေ့မှာ မြင်နေရသလို
+သဘာဝကျကျ ဖော်ပြပါ။
+
+ဥပမာ—
+
+"ကောင်မလေးက တံခါးကို ဖြည်းဖြည်းဖွင့်လိုက်ပါတယ်။
+အခန်းထဲကို ဝင်ကြည့်လိုက်တဲ့အချိန်
+တစ်ခန်းလုံး တိတ်ဆိတ်နေပါတယ်။"
+
+"သူမ နောက်ကိုလှည့်ကြည့်လိုက်တဲ့အခါ
+အနောက်မှာ လူတစ်ယောက် ရပ်နေတာကို
+ရုတ်တရက်တွေ့လိုက်ရပါတယ်။"
+
+ထိုကဲ့သို့ Video ထဲက
+မြင်ရသောအရာကို Story အဖြစ် ပြန်ဖော်ပြပါ။
+
+သို့သော် မမြင်ရသောအရာကို မတီထွင်ပါနှင့်။
+
+
+==================================================
+3. NARRATOR
+==================================================
+
+Narrator သည် Story ကို ချိတ်ဆက်ပေးရမည်။
+
+Narrator က—
+
+• အခြေအနေရှင်းပြခြင်း
+• ဇာတ်ကောင်လုပ်ရပ်ရှင်းပြခြင်း
+• Scene တစ်ခုမှတစ်ခုသို့ ချိတ်ဆက်ခြင်း
+• Suspense ဖန်တီးခြင်း
+• အရေးကြီးတဲ့အချက်ကို Highlight လုပ်ခြင်း
+• ကြည့်ရှုသူ ဆက်ကြည့်ချင်အောင် Curiosity ဖန်တီးခြင်း
+
+တို့ကို သဘာဝကျကျ ပြုလုပ်ရမည်။
+
+Narrator စကားကို
+စာအုပ်ဖတ်နေသလို မရေးပါနှင့်။
+
+မြန်မာလူတစ်ယောက် Movie Recap ပြောနေသလို
+စကားပြောပုံစံဖြင့် ရေးပါ။
+
+
+==================================================
+4. CHARACTER DIALOGUE
+==================================================
+
+Video ထဲမှာ ဇာတ်ကောင်တွေ
+အပြန်အလှန်ပြောဆိုနေပါက
+Dialogue ကို ထည့်ပါ။
+
+Narrator တစ်ယောက်တည်းက
+ဇာတ်ကောင်အားလုံးရဲ့ စကားကို
+အကုန်ပြောနေသလို မရေးပါနှင့်။
+
+ဥပမာ—
+
+ကောင်မလေးက သူ့ကိုကြည့်ပြီး
+"နင် ဒီကို ဘာလာလုပ်တာလဲ?"
+
+ကောင်လေးက ခဏငြိမ်ပြီး
+"ငါ မင်းကိုရှာနေတာ။"
+
+သူမက မယုံသလိုကြည့်ပြီး
+"တကယ်လား?"
+
+ဒီလို Dialogue Flow ရှိနိုင်သည်။
+
+သို့သော်—
+
+IMPORTANT:
+
+Video ထဲတွင် မကြားရသော
+သို့မဟုတ် Video မှ အဓိပ္ပာယ်မသေချာသော
+Dialogue ကို ကိုယ်တိုင်မတီထွင်ပါနှင့်။
+
+Video ထဲမှာ Dialogue မရှိရင်
+Dialogue အတင်းထည့်ရန် မလိုပါ။
+
+
+==================================================
+5. DIALOGUE + NARRATOR FLOW
+==================================================
+
+Script တစ်ခုလုံးကို Narrator စကားချည်း
+ဆက်တိုက်မရေးပါနှင့်။
+
+လိုအပ်သလို—
+
+Narrator
+→ Character A
+→ Character B
+→ Narrator
+→ Character A
+→ Character C
+→ Narrator
+
+ကဲ့သို့ Flow ဖြစ်အောင်ရေးပါ။
+
+ဒါပေမယ့် Video ထဲက အခြေအနေကို
+မဖျက်မိအောင် ဦးစားပေးပါ။
+
+
+==================================================
+6. TIKTOK / FACEBOOK / YOUTUBE HOOK
+==================================================
+
+Script အစမှာ ပရိသတ်ကို ဆွဲဆောင်နိုင်တဲ့
+Hook တစ်ခု ထည့်ပါ။
+
+Hook သည် Video ထဲမှာ တကယ်ဖြစ်လာမည့်
+အရေးကြီးသောအဖြစ်အပျက်ကို အခြေခံရမည်။
+
+ဥပမာ—
+
+"ဒီကောင်လေး အဲ့ဒီအခန်းထဲကို ဝင်သွားတဲ့အချိန်မှာ
+သူ့ဘဝတစ်ခုလုံး ပြောင်းလဲသွားမယ့်အကြောင်း
+လုံးဝမသိခဲ့ပါဘူး။"
+
+သို့မဟုတ် Video ထဲက ဖြစ်ရပ်နဲ့
+ပိုကိုက်ညီတဲ့ Hook ကို ဖန်တီးပါ။
+
+Clickbait လွန်လွန်ကဲကဲ မလုပ်ပါနှင့်။
+
+
+==================================================
+7. SUSPENSE
+==================================================
+
+Video ထဲမှာ Suspense ရှိပါက
+ကြည့်ရှုသူ ဆက်ကြည့်ချင်အောင်
+သဘာဝကျကျရေးပါ။
+
+ဥပမာ—
+
+"ဒါပေမယ့် သူမ မသိသေးတာက
+အခန်းထဲမှာ သူမထင်ထားတာထက်
+ပိုပြီး အန္တရာယ်ရှိတဲ့အရာတစ်ခု
+စောင့်နေခဲ့တာပါ။"
+
+သို့သော် Video ထဲမှာ
+တကယ်မရှိတဲ့အရာကို မထည့်ပါနှင့်။
+
+
+==================================================
+8. STORY ORDER
+==================================================
+
+ဇာတ်လမ်းကို Video Timeline အတိုင်းရေးပါ။
+
+အောက်ပါ Flow ကို လိုက်နာပါ—
+
+HOOK
+↓
+ဇာတ်ကောင် / အခြေအနေ
+↓
+ပြဿနာစတင်ခြင်း
+↓
+ပဋိပက္ခ
+↓
+အရေးကြီးဖြစ်ရပ်များ
+↓
+ဇာတ်ကောင်များ၏ တုံ့ပြန်မှု
+↓
+ပြောင်းလဲမှု
+↓
+Climax
+↓
+ဖြေရှင်းမှု
+↓
+Ending
+
+Video ရဲ့ အစိတ်အပိုင်းတွေကို
+အကြောင်းမဲ့ မကျော်ပါနှင့်။
+
+
+==================================================
+9. NO INVENTED INFORMATION
+==================================================
+
+အလွန်အရေးကြီးသည်။
+
+Video ထဲတွင် မမြင်ရ၊ မကြားရ၊
+သေချာမသိရသော—
+
+• Character Name
+• Relationship
+• Location
+• Motivation
+• Dialogue
+• Backstory
+• Event
+• Ending
+
+တို့ကို မိမိစိတ်ကူးဖြင့် မထည့်ပါနှင့်။
+
+မသေချာလျှင် အတည်ပြုထားသကဲ့သို့
+မရေးပါနှင့်။
+
+
+==================================================
+10. NATURAL MYANMAR
+==================================================
+
+မြန်မာပရိသတ် နားထောင်ရလွယ်အောင်
+နေ့စဉ်စကားပြောသလို သဘာဝကျတဲ့
+မြန်မာစကားကို အသုံးပြုပါ။
+
+ဘာသာပြန်စက်လို မရေးပါနှင့်။
+
+အလွန်စာအုပ်ဆန်သော စကားအသုံးအနှုန်း
+မသုံးပါနှင့်။
+
+ဝါကျများကို အလွန်ရှည်မထားပါနှင့်။
+
+
+==================================================
+11. TTS FRIENDLY
+==================================================
+
+ဒီ Script ကို AI Voice ဖြင့် ဖတ်မည်ဖြစ်သောကြောင့်—
+
+• ဝါကျတိုတို
+• သဘာဝကျသော punctuation
+• အသံထွက်ဖတ်ရလွယ်
+• စကားပြောသလိုရေး
+• အဓိပ္ပာယ်ရှင်းလင်း
+
+ဖြစ်ရမည်။
+
+
+==================================================
+12. OUTPUT FORMAT
+==================================================
+
+အောက်ပါ Technical Label များကို မထည့်ပါနှင့်—
+
+[Visual]
+[Scene]
+[Camera]
+[Shot]
+[Action]
+[Audio]
+[Video]
+
+ထို့အပြင်—
+
+"Recap Script"
+"Summary"
+"Visual Cue"
+"Scene 1"
+"Scene 2"
+
+ကဲ့သို့သော Technical Heading များလည်း
+မလိုအပ်ပါ။
+
+Narrator နှင့် Character Dialogue ကို
+သဘာဝကျတဲ့ Paragraph Flow ဖြင့်ရေးပါ။
+
+ဥပမာ—
+
+"ညဘက်မှာ ကောင်လေးတစ်ယောက်
+အိမ်တစ်အိမ်ရှေ့ကို ရောက်လာပါတယ်။
+သူက တံခါးကို ကြည့်ပြီး ခဏရပ်နေပါတယ်။
+
+တံခါးဖွင့်ပြီး အထဲဝင်သွားတဲ့အချိန်မှာ
+အိမ်ထဲက မိန်းကလေးက သူ့ကိုမြင်ပြီး
+'နင် ဘာလာလုပ်တာလဲ' လို့ မေးလိုက်ပါတယ်။
+
+ကောင်လေးကတော့
+'ငါ မင်းကို ပြောစရာရှိလို့' လို့ ပြန်ပြောပါတယ်။
+
+ဒါပေမယ့် သူတို့နှစ်ယောက် စကားပြောနေတဲ့အချိန်မှာ
+အပြင်ဘက်ကနေ ထူးဆန်းတဲ့အသံတစ်ခု
+ကြားလိုက်ရပါတယ်။"
+
+အထက်ပါပုံစံအတိုင်း
+Visual + Narrator + Dialogue ကို
+သဘာဝကျကျ ဆက်စပ်ရေးပါ။
+
+FINAL OUTPUT သည်
+TTS ထုတ်ရန်အတွက် သန့်ရှင်းသော
+မြန်မာ Movie Recap Script သာ ဖြစ်ရမည်။
 """
+
+
+        # =================================================
+        # GENERATE
+        # =================================================
 
         response = client.models.generate_content(
             model="gemini-3.6-flash",
@@ -538,17 +1131,49 @@ Aspect Ratio:
             ]
         )
 
-        script_text = response.text
 
-        clean_text = clean_script_for_tts(
-            script_text
+        script_text = (
+            response.text
+            if response.text
+            else ""
         )
 
-        srt_file, zip_file = (
-            generate_srt_and_zip(
+
+        if not script_text.strip():
+
+            return (
+                "",
+                "⚠️ Gemini က Script မထုတ်ပေးနိုင်ပါ။",
+                None,
+                None
+            )
+
+
+        # =================================================
+        # CLEAN FOR TTS
+        # =================================================
+
+        clean_text = (
+            clean_script_for_tts(
                 script_text
             )
         )
+
+
+        # =================================================
+        # SRT
+        # =================================================
+
+        srt_file, zip_file = (
+            generate_srt_and_zip(
+                clean_text
+            )
+        )
+
+
+        # =================================================
+        # RETURN
+        # =================================================
 
         return (
             clean_text,
@@ -557,18 +1182,24 @@ Aspect Ratio:
             zip_file
         )
 
+
     except Exception as e:
+
+        print(
+            "Gemini Error:",
+            e
+        )
 
         return (
             "",
-            f"⚠️ Error ဖြစ်ပွားပါသည်: {str(e)}",
+            f"⚠️ Error ဖြစ်ပွားပါသည်:\n\n{str(e)}",
             None,
             None
         )
 
 
 # =========================================================
-# TTS
+# TEXT TO SPEECH
 # =========================================================
 
 async def generate_myanmar_tts(
@@ -577,7 +1208,10 @@ async def generate_myanmar_tts(
     speed_percent
 ):
 
-    if not text or not text.strip():
+    if (
+        not text
+        or not text.strip()
+    ):
 
         return (
             None,
@@ -586,20 +1220,40 @@ async def generate_myanmar_tts(
             None
         )
 
-    clean_text = clean_script_for_tts(
-        text
+
+    clean_text = (
+        clean_script_for_tts(
+            text
+        )
     )
+
 
     selected_voice = VOICES.get(
         voice_choice,
         "my-MM-ThihaNeural"
     )
 
-    rate_str = f"{speed_percent:+d}%"
+
+    try:
+
+        speed_percent = int(
+            speed_percent
+        )
+
+    except:
+
+        speed_percent = 5
+
+
+    rate_str = (
+        f"{speed_percent:+d}%"
+    )
+
 
     output_filename = (
         "recap_voice_over.mp3"
     )
+
 
     communicate = edge_tts.Communicate(
         clean_text,
@@ -607,15 +1261,18 @@ async def generate_myanmar_tts(
         rate=rate_str
     )
 
+
     await communicate.save(
         output_filename
     )
+
 
     srt_file, zip_file = (
         generate_srt_and_zip(
             clean_text
         )
     )
+
 
     return (
         output_filename,
@@ -625,19 +1282,39 @@ async def generate_myanmar_tts(
     )
 
 
+# =========================================================
+# TTS WRAPPER
+# =========================================================
+
 def tts_interface(
     text,
     voice_choice,
     speed
 ):
 
-    return asyncio.run(
-        generate_myanmar_tts(
-            text,
-            voice_choice,
-            speed
+    try:
+
+        return asyncio.run(
+            generate_myanmar_tts(
+                text,
+                voice_choice,
+                speed
+            )
         )
-    )
+
+    except Exception as e:
+
+        print(
+            "TTS Error:",
+            e
+        )
+
+        return (
+            None,
+            None,
+            None,
+            None
+        )
 
 
 # =========================================================
@@ -649,25 +1326,48 @@ with gr.Blocks(
     theme=gr.themes.Soft()
 ) as demo:
 
+
+    # =====================================================
+    # GLOBAL PREVIEW CSS + JS
+    # =====================================================
+
+    gr.HTML(
+        RATIO_CSS
+        + RATIO_JS
+    )
+
+
+    # =====================================================
+    # TITLE
+    # =====================================================
+
     gr.Markdown(
         "# 🎬 AI Movie Recap Studio Pro"
     )
 
-    # Global CSS
-    gr.HTML(
-        RATIO_PREVIEW_CSS
-        + RATIO_PREVIEW_JS
+    gr.Markdown(
+        "Video → AI Movie Recap → Burmese Voice → SRT"
     )
+
+
+    # =====================================================
+    # TABS
+    # =====================================================
 
     with gr.Tabs():
 
+
         # =================================================
-        # API KEY
+        # API KEY TAB
         # =================================================
 
         with gr.TabItem(
             "🔑 API Key Setting"
         ):
+
+            gr.Markdown(
+                "### 🔑 Gemini API Key"
+            )
 
             api_key_input = gr.Textbox(
                 label="Gemini API Key",
@@ -680,7 +1380,9 @@ with gr.Blocks(
                 variant="primary"
             )
 
-            key_status = gr.Markdown("")
+            key_status = gr.Markdown(
+                ""
+            )
 
 
         # =================================================
@@ -693,7 +1395,11 @@ with gr.Blocks(
 
             with gr.Row():
 
-                # LEFT
+
+                # -----------------------------------------
+                # LEFT SIDE
+                # -----------------------------------------
+
                 with gr.Column(
                     scale=1
                 ):
@@ -704,15 +1410,25 @@ with gr.Blocks(
                         type="filepath"
                     )
 
+
                     video_url = gr.Textbox(
                         label="🔗 Video URL Link",
-                        placeholder="https://..."
+                        placeholder=(
+                            "https://youtube.com/..."
+                        )
                     )
 
+
                     load_link_btn = gr.Button(
-                        "🔍 Link မှ ဗီဒီယိုရယူမည်",
+                        "🔍 Link မှ Video ရယူမည်",
                         variant="secondary"
                     )
+
+
+                    gr.Markdown(
+                        "### 📐 Preview Aspect Ratio"
+                    )
+
 
                     ratio_picker = gr.Radio(
                         choices=[
@@ -722,20 +1438,27 @@ with gr.Blocks(
                             "16:9"
                         ],
                         value="9:16",
-                        label="📐 Preview Aspect Ratio"
+                        label="Ratio ရွေးချယ်ပါ"
                     )
+
 
                     ratio_status = gr.HTML(
-                        ratio_change_html("9:16")
+                        change_ratio(
+                            "9:16"
+                        )
                     )
 
+
                     gen_script_btn = gr.Button(
-                        "🚀 Script ထုတ်မည်",
+                        "🚀 Video မှ Script ထုတ်မည်",
                         variant="primary"
                     )
 
 
-                # RIGHT
+                # -----------------------------------------
+                # RIGHT SIDE
+                # -----------------------------------------
+
                 with gr.Column(
                     scale=1
                 ):
@@ -744,25 +1467,33 @@ with gr.Blocks(
                         "### 📺 Video Preview"
                     )
 
+
                     tab1_preview = gr.Video(
-                        label="Preview",
-                        elem_id="tab1_preview_container",
+                        label="Video Preview",
                         show_label=False,
+                        elem_id="tab1_preview_container",
                         interactive=False
                     )
 
-                    script_display = gr.Markdown(
-                        label="ထွက်ရှိလာသော Script"
+
+                    gr.Markdown(
+                        "### 📝 Generated Movie Recap"
                     )
+
+
+                    script_display = gr.Markdown(
+                        ""
+                    )
+
 
                     with gr.Row():
 
                         srt_download_tab1 = gr.File(
-                            label="📄 SRT"
+                            label="📄 SRT Download"
                         )
 
                         zip_download_tab1 = gr.File(
-                            label="📦 ZIP"
+                            label="📦 ZIP Download"
                         )
 
 
@@ -776,15 +1507,26 @@ with gr.Blocks(
 
             with gr.Row():
 
+
+                # -----------------------------------------
+                # LEFT
+                # -----------------------------------------
+
                 with gr.Column(
                     scale=1
                 ):
 
                     input_text = gr.Textbox(
-                        label="🎙️ စာသား",
-                        lines=12,
-                        placeholder="စာသားများ ရိုက်ထည့်နိုင်ပါသည်..."
+                        label=(
+                            "🎙️ မြန်မာ Movie Recap Script"
+                        ),
+                        lines=15,
+                        placeholder=(
+                            "Tab 1 မှ Script အလိုအလျောက် "
+                            "ရောက်ရှိပါမည်..."
+                        )
                     )
+
 
                     voice_dropdown = gr.Dropdown(
                         choices=list(
@@ -794,22 +1536,31 @@ with gr.Blocks(
                             "Thiha "
                             "(အမျိုးသားအသံ) - Natural"
                         ),
-                        label="ရွေးချယ်မည့် အသံ"
+                        label="🎙️ အသံရွေးချယ်ပါ"
                     )
+
 
                     speed_slider = gr.Slider(
                         minimum=-30,
                         maximum=50,
                         value=5,
                         step=1,
-                        label="အသံအမြန်နှုန်း Speed (%)"
+                        label=(
+                            "⚡ အသံအမြန်နှုန်း "
+                            "Speed (%)"
+                        )
                     )
 
+
                     gen_voice_btn = gr.Button(
-                        "⚡ အသံထုတ်မည်",
+                        "⚡ မြန်မာအသံထုတ်မည်",
                         variant="primary"
                     )
 
+
+                # -----------------------------------------
+                # RIGHT
+                # -----------------------------------------
 
                 with gr.Column(
                     scale=1
@@ -821,24 +1572,31 @@ with gr.Blocks(
                         label="🔊 အသံနားဆင်ရန်"
                     )
 
+
                     mp3_download = gr.File(
                         label="🎵 MP3 Download"
                     )
 
+
                     with gr.Row():
 
                         srt_download_tab2 = gr.File(
-                            label="📄 SRT"
+                            label="📄 SRT Download"
                         )
 
                         zip_download_tab2 = gr.File(
-                            label="📦 ZIP"
+                            label="📦 ZIP Download"
                         )
 
 
     # =====================================================
     # EVENTS
     # =====================================================
+
+
+    # -----------------------------------------
+    # SAVE API KEY
+    # -----------------------------------------
 
     save_key_btn.click(
         fn=save_api_key,
@@ -847,42 +1605,42 @@ with gr.Blocks(
     )
 
 
-    # ---------------------------------------------
+    # -----------------------------------------
     # VIDEO FILE → PREVIEW
-    # ---------------------------------------------
+    # -----------------------------------------
 
     video_file.change(
-        fn=lambda video: video,
+        fn=preview_uploaded_video,
         inputs=video_file,
         outputs=tab1_preview
     )
 
 
-    # ---------------------------------------------
-    # LINK → PREVIEW
-    # ---------------------------------------------
+    # -----------------------------------------
+    # LINK → VIDEO PREVIEW
+    # -----------------------------------------
 
     load_link_btn.click(
-        fn=load_tab1_link,
+        fn=load_video_link,
         inputs=video_url,
         outputs=tab1_preview
     )
 
 
-    # ---------------------------------------------
+    # -----------------------------------------
     # RATIO CHANGE
-    # ---------------------------------------------
+    # -----------------------------------------
 
     ratio_picker.change(
-        fn=ratio_change_html,
+        fn=change_ratio,
         inputs=ratio_picker,
         outputs=ratio_status
     )
 
 
-    # ---------------------------------------------
+    # -----------------------------------------
     # GENERATE SCRIPT
-    # ---------------------------------------------
+    # -----------------------------------------
 
     gen_script_btn.click(
         fn=analyze_and_generate_script,
@@ -900,9 +1658,9 @@ with gr.Blocks(
     )
 
 
-    # ---------------------------------------------
+    # -----------------------------------------
     # TTS
-    # ---------------------------------------------
+    # -----------------------------------------
 
     gen_voice_btn.click(
         fn=tts_interface,
