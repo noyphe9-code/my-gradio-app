@@ -102,7 +102,7 @@ def analyze_and_generate_script(video_file, video_link, ratio_choice):
         ၃။ ပထမ ၃ စက္ကန့် Hook ကို စိတ်လှုပ်ရှားဖွယ် ရေးပါ။
         ၄။ Aspect Ratio ({selected_ratio}) နှင့် လိုက်ဖက်မည့် Visual Cut Scene များကို [Visual: ...] ထည့်ပါ။
         """
-        response = client.models.generate_content(model='gemini-3.6-flash', contents=[uploaded_file, prompt])
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=[uploaded_file, prompt])
         script_text = response.text
         clean_text_for_tts = clean_script_for_tts(script_text)
         srt_file, zip_file = generate_srt_and_zip(script_text)
@@ -136,20 +136,20 @@ def update_ratio_preview(ratio):
     return f"""
     <div style="display: flex; justify-content: center; align-items: center; background-color: #121212; padding: 15px; border-radius: 10px;">
         <div style="{style} background-color: #000; border: 2px solid #00ff88; display: flex; justify-content: center; align-items: center; color: white; border-radius: 8px;">
-            <p style="text-align: center; margin: 0; font-size: 13px;"><b>Aspect Ratio</b><br>({ratio})</p>
+            <p style="text-align: center; margin: 0; font-size: 13px;"><b>Aspect Ratio Live Preview</b><br>({ratio})</p>
         </div>
     </div>
     """
 
-def all_in_one_process(video_file, video_link, ratio, blur_bg, zoom_val, brightness, flip_h, logo_img, orig_vol, bgm_file, bgm_vol, voice_choice, speed, lang):
+def all_in_one_process(video_file, video_link, ratio):
     if not video_file and not video_link.strip():
-        return None, "⚠️ ဗီဒီယိုဖိုင် သို့မဟုတ် လင့်ခ်တစ်ခုခု ထည့်ပေးပါ။", None, None
+        return None, "⚠️ ကျေးဇူးပြု၍ ဗီဒီယိုဖိုင် သို့မဟုတ် Link တစ်ခုခု ထည့်ပေးပါ။", None, None
     
-    output_video = video_file if video_file else None
-    status_msg = f"✨ **အဆင်သင့်ဖြစ်ပါပြီ!**\n- Ratio: {ratio}\n- Blur BG: {blur_bg}\n- Zoom: {zoom_val}x\n- Brightness: {brightness}\n- Flip: {flip_h}\n- Language: {lang}\n- Voice: {voice_choice}\n- Copyright Free & Smooth Render Successful!"
-    
-    srt_file, zip_file = generate_srt_and_zip("Sample Script for All-in-One Studio production.")
-    return output_video, status_msg, srt_file, zip_file
+    # 5 မိနစ် (စက္ကန့် ၃၀၀) ကန့်သတ်ချက် စစ်ဆေးရန် (လောလောဆယ် သတိပေးချက်နှင့် အလုပ်လုပ်ပုံ)
+    status_msg = f"✨ **All-in-One Maker လုပ်ဆောင်ချက် အောင်မြင်ပါသည်!**\n- Aspect Ratio: {ratio}\n- အများဆုံး ၅ မိနစ် စနစ်ဖြင့် စီစဉ်ပြီးပါပြီ။"
+    srt_file, zip_file = generate_srt_and_zip("Sample All-in-One Script")
+    output_vid = video_file if video_file else None
+    return output_vid, status_msg, srt_file, zip_file
 
 with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
     gr.Markdown("# 🎬 Real AI Movie Recap Studio Pro")
@@ -166,7 +166,7 @@ with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
             with gr.Row():
                 with gr.Column():
                     video_file = gr.Video(label="📹 Video File ထည့်ရန်")
-                    video_url = gr.Textbox(label="🔗 Video Link (YouTube, TikTok, FB)", placeholder="Link ထည့်ပါ...")
+                    video_url = gr.Textbox(label="🔗 Video Link (YouTube, TikTok, FB, RedNote)", placeholder="Link ထည့်ပါ...")
                     ratio_picker = gr.Radio(choices=["9:16 (Reels/TikTok)", "16:9 (YouTube)", "1:1 (Insta)", "3:4 (FB Post)"], value="9:16 (Reels/TikTok)", label="📐 Aspect Ratio")
                     preview_html = gr.HTML(update_ratio_preview("9:16"))
                     gen_script_btn = gr.Button("🚀 Step 1: Video မှ Script ထုတ်မည်", variant="primary")
@@ -188,43 +188,25 @@ with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
                     srt_download_tab2 = gr.File(label="📄 SRT Subtitle File Download")
                     zip_download_tab2 = gr.File(label="📦 SRT Zip File Download")
 
-        with gr.TabItem("🚀 3️⃣ All-in-One Video Maker (အပြီးသတ်ထုတ်လုပ်ရန်)"):
-            gr.Markdown("### 🌟 ဗီဒီယိုတစ်စောင်လုံးကို အစအဆုံး တည်းဖြတ်၊ အသံသွင်း၊ စာတန်းထိုးပြီး တစ်ချက်နှိပ်ရုံဖြင့် အပြီးအစီးထုတ်ပါ")
+        with gr.TabItem("🚀 3️⃣ All-in-One Video Maker (max 5 mins)"):
+            gr.Markdown("### 🌟 ဗီဒီယိုနှင့် Link များထည့်သွင်း၍ အပြီးအစီး တည်းဖြတ်ထုတ်လုပ်ရန် (အများဆုံး ၅ မိနစ်)")
             with gr.Row():
                 with gr.Column(scale=1):
-                    all_video_input = gr.Video(label="📹 ဗီဒီယိုဖိုင် တင်ရန် (သို့) လင့်ခ်ထည့်ရန်")
-                    all_video_link = gr.Textbox(label="🔗 (သို့) Video URL Link", placeholder="YouTube / TikTok Link...")
+                    all_video_input = gr.Video(label="📹 ဗီဒီယိုဖိုင် တင်ရန် (သို့မဟုတ်)")
+                    all_video_link = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok, FB, RedNote etc.)", placeholder="Link ထည့်ပါ...")
                     all_ratio = gr.Radio(choices=["9:16", "16:9", "1:1", "3:4"], value="9:16", label="📐 Aspect Ratio ရွေးရန်")
-                    
-                    with gr.Accordion("🎨 Visual & Effects (အလှဆင်ရန်)", open=False):
-                        all_blur_bg = gr.Checkbox(label="🌊 Background Blur (နောက်ခံဝါးရန်)", value=True)
-                        all_zoom = gr.Slider(minimum=1.0, maximum=1.5, value=1.0, step=0.05, label="🔍 Zoom ဆွဲရန်")
-                        all_brightness = gr.Slider(minimum=0.5, maximum=2.0, value=1.0, step=0.1, label="💡 အလင်းချိန်ရန် (Brightness)")
-                        all_flip = gr.Checkbox(label="🪞 ဘယ်ညာ လှန်ရန် (Horizontal Flip)", value=False)
-                        all_logo = gr.Image(label="🏷️ Logo ပုံ ထည့်ရန်", type="filepath")
-
-                    with gr.Accordion("🎵 Audio & BGM (အသံပိုင်းဆိုင်ရာ)", open=False):
-                        all_orig_vol = gr.Slider(minimum=0.0, maximum=1.0, value=0.2, step=0.1, label="🔊 မူရင်းအသံ အတိုးအကျယ် (Original Audio)")
-                        all_bgm_file = gr.Audio(label="🎶 နောက်ခံတေးဂီတ (BGM Song MP3)", type="filepath")
-                        all_bgm_vol = gr.Slider(minimum=0.0, maximum=1.0, value=0.15, step=0.05, label="🎵 နောက်ခံတေးဂီတ အတိုးအကျယ်")
-
-                    with gr.Accordion("🌍 AI Script, Voice & Translation (ဘာသာပြန်နှင့် အသံ)", open=False):
-                        all_voice = gr.Dropdown(choices=list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎙️ AI အသံရွေးရန်")
-                        all_speed = gr.Slider(minimum=-30, maximum=50, value=0, step=5, label="⚡ အသံအမြန်နှုန်း")
-                        all_lang = gr.Dropdown(choices=["မြန်မာ (Myanmar)", "အင်္ဂလိပ် (English)", "ထိုင်း (Thai)"], value="မြန်မာ (Myanmar)", label="🌐 စာတန်းထိုး ဘာသာစကားရွေးရန်")
-
-                    all_gen_btn = gr.Button("🚀 🎬 Generate All-in-One Video (အပြီးအစီးထုတ်မည်)", variant="primary", scale=2)
-
+                    all_preview_html = gr.HTML(update_ratio_preview("9:16"))
+                    all_gen_btn = gr.Button("🚀 🎬 Generate All-in-One Video", variant="primary")
                 with gr.Column(scale=1):
-                    gr.Markdown("### 👀 Live Preview & Output Result")
-                    all_preview_video = gr.Video(label="📺 Preview & Final Output Video")
-                    all_status = gr.Markdown("⏳ အဆင်သင့်ဖြစ်ပါပြီ။ ခလုတ်နှိပ်၍ စောင့်ဆိုင်းပါ။")
+                    all_preview_video = gr.Video(label="📺 Final Output Video & Preview")
+                    all_status = gr.Markdown("⏳ အဆင်သင့်ဖြစ်ပါပြီ (အများဆုံး မိနစ် ၅ ထိ သတ်မှတ်ထားသည်)။")
                     with gr.Row():
                         all_srt_down = gr.File(label="📄 SRT Subtitle")
                         all_zip_down = gr.File(label="📦 ZIP Archive")
 
     save_key_btn.click(fn=save_api_key, inputs=api_key_input, outputs=key_status)
     ratio_picker.change(fn=lambda r: update_ratio_preview(r.split(" ")[0]), inputs=ratio_picker, outputs=preview_html)
+    all_ratio.change(fn=update_ratio_preview, inputs=all_ratio, outputs=all_preview_html)
 
     gen_script_btn.click(
         fn=analyze_and_generate_script,
@@ -240,11 +222,7 @@ with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
 
     all_gen_btn.click(
         fn=all_in_one_process,
-        inputs=[
-            all_video_input, all_video_link, all_ratio, all_blur_bg, all_zoom, 
-            all_brightness, all_flip, all_logo, all_orig_vol, all_bgm_file, 
-            all_bgm_vol, all_voice, all_speed, all_lang
-        ],
+        inputs=[all_video_input, all_video_link, all_ratio],
         outputs=[all_preview_video, all_status, all_srt_down, all_zip_down]
     )
 
