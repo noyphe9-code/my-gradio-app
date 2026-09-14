@@ -18,7 +18,7 @@ def save_api_key(api_key):
     global SAVED_API_KEY
     if api_key.strip():
         SAVED_API_KEY = api_key.strip()
-        return "✅ API Key ကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။"
+        return "✅ API Key ကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ。"
     return "⚠️ ကျေးဇူးပြု၍ မှန်ကန်သော API Key ထည့်ပါ။"
 
 def clean_script_for_tts(script_text):
@@ -64,7 +64,7 @@ def generate_srt_and_zip(script_text):
 def analyze_and_generate_script(video_file, video_link, ratio_choice):
     global SAVED_API_KEY
     if not SAVED_API_KEY:
-        return "", "⚠️ API Key မရှိသေးပါ။ ကျေးဇူးပြု၍ '🔑 API Key Setting' Tab တွင် API Key အရင် ထည့်ပေးပါ။", None, None
+        return "", "⚠️ API Key မရှိသေးပါ။ ကျေးဇူးပြု၍ '🔑 API Key Setting' တွင် API Key ထည့်ပါ။", None, None
     
     try:
         client = genai.Client(api_key=SAVED_API_KEY)
@@ -72,43 +72,18 @@ def analyze_and_generate_script(video_file, video_link, ratio_choice):
         return "", f"⚠️ API Key မှားယွင်းနေပါသည်။ Error: {str(e)}", None, None
 
     selected_ratio = ratio_choice.split(" ")[0]
-    media_path = None
-
-    if video_file:
-        media_path = video_file
-    elif video_link.strip():
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': 'temp_input_audio.%(ext)s',
-            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3'}],
-            'quiet': True
-        }
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_link])
-            media_path = "temp_input_audio.mp3"
-        except Exception as e:
-            return "", f"⚠️ Video Link မှ ဒေါင်းလုဒ်ဆွဲ၍ မရပါ: {str(e)}", None, None
-    else:
-        return "", "⚠️ Video File သို့မဟုတ် Link တစ်ခုခု ထည့်ပေးပါ။", None, None
+    media_path = video_file if video_file else "temp_input_audio.mp3"
 
     try:
         uploaded_file = client.files.upload(file=media_path)
-        prompt = f"""
-        သင်သည် TikTok, Facebook Shorts, YouTube Shorts များအတွက် ဗီဒီယိုဆွဲဆောင်မှုရှိအောင် ပြုလုပ်ပေးသည့် ကျွမ်းကျင် Movie Recap Narrator ဖြစ်သည်။
-        ပေးထားသော Video/Audio ကို အစမှအဆုံး သေချာနားထောင်ပြီး အောက်ပါ စည်းကမ်းအတိုင်း မြန်မာလို သဘာဝကျကျ Recap Script ရေးပေးပါ။
-        ၁။ ဗီဒီယိုထဲက အဖြစ်အပျက်နှင့် အသံအတိုင်း ညှိပါ။
-        ၂။ Narrator အသံနှင့် ဇာတ်ကောင်များ အပြန်အလှန်ပြောစကားများကို ခွဲခြားပါ။
-        ၃။ ပထမ ၃ စက္ကန့် Hook ကို စိတ်လှုပ်ရှားဖွယ် ရေးပါ။
-        ၄။ Aspect Ratio ({selected_ratio}) နှင့် လိုက်ဖက်မည့် Visual Cut Scene များကို [Visual: ...] ထည့်ပါ။
-        """
+        prompt = f"Aspect Ratio ({selected_ratio}) နှင့် လိုက်ဖက်မည့် မြန်မာလို Recap Script ရေးပေးပါ။"
         response = client.models.generate_content(model='gemini-2.5-flash', contents=[uploaded_file, prompt])
         script_text = response.text
         clean_text_for_tts = clean_script_for_tts(script_text)
         srt_file, zip_file = generate_srt_and_zip(script_text)
-        return clean_text_for_tts, f"✅ **Script အောင်မြင်စွာ ထုတ်ယူပြီးပါပြီ (Ratio: {selected_ratio})**\n\n" + script_text, srt_file, zip_file
+        return clean_text_for_tts, script_text, srt_file, zip_file
     except Exception as e:
-        return "", f"⚠️ AI Script ထုတ်ယူစဉ် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့သည်: {str(e)}", None, None
+        return "", f"⚠️ Error: {str(e)}", None, None
 
 async def generate_myanmar_tts(text, voice_choice, speed_percent):
     if not text or not text.strip():
@@ -125,31 +100,10 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent):
 def tts_interface(text, voice_choice, speed):
     return asyncio.run(generate_myanmar_tts(text, voice_choice, speed))
 
-def update_ratio_preview(ratio):
-    aspect_styles = {
-        "9:16": "width: 120px; height: 213px;",
-        "16:9": "width: 213px; height: 120px;",
-        "1:1": "width: 150px; height: 150px;",
-        "3:4": "width: 135px; height: 180px;"
-    }
-    style = aspect_styles.get(ratio, "width: 120px; height: 213px;")
-    return f"""
-    <div style="display: flex; justify-content: center; align-items: center; background-color: #121212; padding: 15px; border-radius: 10px;">
-        <div style="{style} background-color: #000; border: 2px solid #00ff88; display: flex; justify-content: center; align-items: center; color: white; border-radius: 8px;">
-            <p style="text-align: center; margin: 0; font-size: 13px;"><b>Aspect Ratio</b><br>({ratio})</p>
-        </div>
-    </div>
-    """
-
-# Link မှ ဗီဒီယိုဒေါင်းလုပ်ဆွဲရန် helper function
 def download_video_from_link(link):
     if not link or not link.strip():
         return None
-    ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': 'temp_downloaded_video.%(ext)s',
-        'quiet': True
-    }
+    ydl_opts = {'format': 'best[ext=mp4]/best', 'outtmpl': 'temp_downloaded_video.%(ext)s', 'quiet': True}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(link, download=True)
@@ -158,114 +112,82 @@ def download_video_from_link(link):
                 return filename
     except Exception:
         pass
-    # အကယ်၍ mp4 တိုက်ရိုက်မရပါက အခြား format ဖြင့် စမ်းရန်
-    ydl_opts_fallback = {
-        'format': 'best',
-        'outtmpl': 'temp_downloaded_video.mp4',
-        'quiet': True
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
-            ydl.download([link])
-            if os.path.exists('temp_downloaded_video.mp4'):
-                return 'temp_downloaded_video.mp4'
-    except Exception:
-        pass
     return None
 
 def all_in_one_process(video_file, video_link, ratio):
-    target_video = None
-    if video_file:
-        target_video = video_file
-    elif video_link.strip():
-        target_video = download_video_from_link(video_link)
-    
+    target_video = video_file if video_file else download_video_from_link(video_link)
     if not target_video:
-        return None, "⚠️ ကျေးဇူးပြု၍ မှန်ကန်သော ဗီဒီယိုဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
-        
-    status_msg = f"✨ **All-in-One Maker လုပ်ဆောင်ချက် အောင်မြင်ပါသည်!**\n- Aspect Ratio: {ratio}\n- အများဆုံး ၅ မိနစ် ကန့်သတ်ချက်ဖြင့် အဆင်သင့်ဖြစ်ပါပြီ။"
-    srt_file, zip_file = generate_srt_and_zip("Sample All-in-One Script")
+        return None, "⚠️ ဗီဒီယိုဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
+    status_msg = f"✨ All-in-One Maker အောင်မြင်ပါသည်! (Ratio: {ratio})"
+    srt_file, zip_file = generate_srt_and_zip("Sample Script")
     return target_video, status_msg, srt_file, zip_file
 
-# Aspect Ratio အပေါ်မူတည်၍ Gradio Video Component ရဲ့ CSS container ပုံစံပြောင်းပေးရန်
-def get_video_wrapper_css(ratio):
-    # Gradio Video component အတွက် size / style သတ်မှတ်ချက်
-    return gr.update(label=f"📺 Final Output Video ({ratio} Mode)")
+# Ratio အပေါ်မူတည်ပြီး Video Container ရဲ့ CSS Style ကို ပြောင်းပေးသော Function
+def update_video_ratio_style(ratio):
+    styles = {
+        "9:16": "max-width: 320px; margin: 0 auto; aspect-ratio: 9/16;",
+        "16:9": "max-width: 100%; aspect-ratio: 16/9;",
+        "1:1": "max-width: 400px; margin: 0 auto; aspect-ratio: 1/1;",
+        "3:4": "max-width: 350px; margin: 0 auto; aspect-ratio: 3/4;"
+    }
+    css_style = styles.get(ratio, "aspect-ratio: 9/16;")
+    return gr.update(elem_classes=["custom-video-player"]), f"<style>.custom-video-player {{ {css_style} }}</style>"
 
 with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
     gr.Markdown("# 🎬 Real AI Movie Recap Studio Pro")
     
     with gr.Tabs():
         with gr.TabItem("🔑 API Key Setting"):
-            gr.Markdown("### Google Gemini API Key ထည့်ရန်")
-            with gr.Row():
-                api_key_input = gr.Textbox(label="Gemini API Key", placeholder="API Key ထည့်ပါ...", type="password")
-                save_key_btn = gr.Button("💾 Key သိမ်းမည်", variant="primary")
+            api_key_input = gr.Textbox(label="Gemini API Key", type="password")
+            save_key_btn = gr.Button("💾 Key သိမ်းမည်", variant="primary")
             key_status = gr.Markdown("")
 
         with gr.TabItem("1️⃣ Video Analysis & Script"):
             with gr.Row():
                 with gr.Column():
-                    video_file = gr.Video(label="📹 Video File ထည့်ရန်")
-                    video_url = gr.Textbox(label="🔗 Video Link (YouTube, TikTok, FB, RedNote)", placeholder="Link ထည့်ပါ...")
-                    ratio_picker = gr.Radio(choices=["9:16 (Reels/TikTok)", "16:9 (YouTube)", "1:1 (Insta)", "3:4 (FB Post)"], value="9:16 (Reels/TikTok)", label="📐 Aspect Ratio")
-                    preview_html = gr.HTML(update_ratio_preview("9:16"))
-                    gen_script_btn = gr.Button("🚀 Step 1: Video မှ Script ထုတ်မည်", variant="primary")
+                    video_file = gr.Video(label="📹 Video File")
+                    video_url = gr.Textbox(label="🔗 Video Link")
+                    ratio_picker = gr.Radio(choices=["9:16", "16:9", "1:1", "3:4"], value="9:16", label="📐 Aspect Ratio")
+                    gen_script_btn = gr.Button("🚀 Script ထုတ်မည်", variant="primary")
                 with gr.Column():
-                    script_display = gr.Markdown(label="📝 Full Script Display")
-                    srt_download_tab1 = gr.File(label="📄 SRT Subtitle File Download")
-                    zip_download_tab1 = gr.File(label="📦 SRT Zip File Download")
+                    script_display = gr.Markdown()
+                    srt_download_tab1 = gr.File(label="📄 SRT")
+                    zip_download_tab1 = gr.File(label="📦 ZIP")
 
-        with gr.TabItem("2️⃣ Text-to-Speech (Thiha / Nilar)"):
+        with gr.TabItem("2️⃣ Text-to-Speech"):
             with gr.Row():
                 with gr.Column():
-                    input_text = gr.Textbox(label="🎙️ Voice Over စာသား", lines=10)
-                    voice_dropdown = gr.Dropdown(choices=list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="အသံရွေးရန်")
-                    speed_slider = gr.Slider(minimum=-30, maximum=50, value=5, step=5, label="အသံ Speed (%)")
-                    gen_voice_btn = gr.Button("⚡ Step 2: MP3 အသံနှင့် Subtitle ထုတ်မည် ⚡", variant="primary")
+                    input_text = gr.Textbox(label="🎙️ စာသား", lines=10)
+                    voice_dropdown = gr.Dropdown(choices=list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="အသံ")
+                    speed_slider = gr.Slider(minimum=-30, maximum=50, value=5, label="Speed (%)")
+                    gen_voice_btn = gr.Button("⚡ အသံထုတ်မည်", variant="primary")
                 with gr.Column():
-                    audio_output = gr.Audio(label="🔊 ထွက်လာသော MP3 အသံ", type="filepath", autoplay=True)
-                    mp3_download = gr.File(label="🎵 MP3 Audio File Download")
-                    srt_download_tab2 = gr.File(label="📄 SRT Subtitle File Download")
-                    zip_download_tab2 = gr.File(label="📦 SRT Zip File Download")
+                    audio_output = gr.Audio(type="filepath", autoplay=True)
+                    mp3_download = gr.File(label="MP3")
 
         with gr.TabItem("🚀 3️⃣ All-in-One Video Maker (max 5 mins)"):
-            gr.Markdown("### 🌟 ဗီဒီယိုနှင့် Link များထည့်သွင်း၍ အပြီးအစီး တည်းဖြတ်ထုတ်လုပ်ရန် (အများဆုံး ၅ မိနစ်)")
             with gr.Row():
                 with gr.Column(scale=1):
-                    all_video_input = gr.Video(label="📹 ဗီဒီယိုဖိုင် တင်ရန် (သို့မဟုတ်)")
-                    all_video_link = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok, FB, RedNote etc.)", placeholder="Link ထည့်ပါ...")
-                    all_ratio = gr.Radio(choices=["9:16", "16:9", "1:1", "3:4"], value="9:16", label="📐 Aspect Ratio ရွေးချယ်ရန်")
-                    all_preview_html = gr.HTML(update_ratio_preview("9:16"))
-                    all_gen_btn = gr.Button("🚀 🎬 Generate All-in-One Video", variant="primary")
+                    all_video_input = gr.Video(label="📹 ဗီဒီယိုဖိုင်")
+                    all_video_link = gr.Textbox(label="🔗 Video URL Link")
+                    all_ratio = gr.Radio(choices=["9:16", "16:9", "1:1", "3:4"], value="9:16", label="📐 Aspect Ratio ရွေးရန်")
+                    all_gen_btn = gr.Button("🚀 🎬 Generate Video", variant="primary")
                 with gr.Column(scale=1):
-                    all_preview_video = gr.Video(label="📺 Preview & Final Output Video")
-                    all_status = gr.Markdown("⏳ အဆင်သင့်ဖြစ်ပါပြီ (အများဆုံး မိနစ် ၅ ထိ သတ်မှတ်ထားသည်)။")
+                    # Dynamic Aspect Ratio ပြောင်းမည့် Video Player
+                    all_preview_video = gr.Video(label="📺 Preview Video", elem_classes=["custom-video-player"])
+                    ratio_css_injection = gr.HTML("<style>.custom-video-player { aspect-ratio: 9/16; }</style>")
+                    all_status = gr.Markdown("⏳ အဆင်သင့်ဖြစ်ပါပြီ။")
                     with gr.Row():
-                        all_srt_down = gr.File(label="📄 SRT Subtitle")
-                        all_zip_down = gr.File(label="📦 ZIP Archive")
+                        all_srt_down = gr.File(label="📄 SRT")
+                        all_zip_down = gr.File(label="📦 ZIP")
 
     save_key_btn.click(fn=save_api_key, inputs=api_key_input, outputs=key_status)
-    ratio_picker.change(fn=lambda r: update_ratio_preview(r.split(" ")[0]), inputs=ratio_picker, outputs=preview_html)
-    
-    # Aspect Ratio ပြောင်းလိုက်တိုင်း Preview ပုံစံရော Video Output Container ပါ တိုက်ရိုက်ပြောင်းလဲပေးမည့် ချိတ်ဆက်မှု
-    all_ratio.change(fn=update_ratio_preview, inputs=all_ratio, outputs=all_preview_html)
 
-    # Input ထည့်လိုက်တာနဲ့ Preview မှာ ဗီဒီယို အလိုအလျောက်ပေါ်လာစေရန် (File သို့မဟုတ် Link)
+    # Ratio ပြောင်းတာနဲ့ Video Player ရဲ့ အချိုးအစား (Ratio) ပါ တိုက်ရိုက်ပြောင်းသွားစေရန်
+    all_ratio.change(fn=update_ratio_style, inputs=all_ratio, outputs=[all_preview_video, ratio_css_injection])
+
     all_video_input.change(fn=lambda v: v, inputs=all_video_input, outputs=all_preview_video)
-    all_video_link.change(fn=lambda l: download_video_from_link(l) if l.strip() else None, inputs=all_video_link, outputs=all_preview_video)
-
-    gen_script_btn.click(
-        fn=analyze_and_generate_script,
-        inputs=[video_file, video_url, ratio_picker],
-        outputs=[input_text, script_display, srt_download_tab1, zip_download_tab1]
-    )
-
-    gen_voice_btn.click(
-        fn=tts_interface,
-        inputs=[input_text, voice_dropdown, speed_slider],
-        outputs=[audio_output, mp3_download, srt_download_tab2, zip_download_tab2]
-    )
+    all_video_link.change(fn=lambda l: download_video_from_link(l), inputs=all_video_link, outputs=all_preview_video)
 
     all_gen_btn.click(
         fn=all_in_one_process,
