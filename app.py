@@ -1,4 +1,4 @@
-   import gradio as gr
+import gradio as gr
 import edge_tts
 import asyncio
 import os
@@ -65,10 +65,9 @@ def generate_srt_and_zip(script_text):
 def download_video_from_link(link):
     if not link or not link.strip():
         return None
-    # mp4 သို့ တိုက်ရိုက် convert လုပ်ပြီး သေချာဒေါင်းလုဒ်ဆွဲခြင်း
     out_template = 'temp_downloaded_video.%(ext)s'
     ydl_opts = {
-        'format': 'best[ext=mp4]/best',
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': out_template,
         'quiet': True,
         'overwrites': True
@@ -79,7 +78,6 @@ def download_video_from_link(link):
             filename = ydl.prepare_filename(info)
             if os.path.exists(filename):
                 return filename
-            # Extension ကွဲလွဲမှုရှိပါက ရှာဖွေပေးခြင်း
             matched_files = glob.glob("temp_downloaded_video.*")
             if matched_files:
                 return matched_files[0]
@@ -88,37 +86,71 @@ def download_video_from_link(link):
         return None
     return None
 
-# Video file သို့မဟုတ် URL Link ထည့်သွင်းမှုကို Preview သို့ ချိတ်ဆက်ပေးမည့် Helper
-def handle_video_preview(file_path, link):
-    if file_path:
-        return file_path, "✅ ဗီဒီယိုဖိုင် Preview အဆင်သင့်ဖြစ်ပါပြီ။"
-    if link and link.strip():
-        downloaded = download_video_from_link(link)
-        if downloaded:
-            return downloaded, "✅ Link မှ ဗီဒီယို Preview ဒေါင်းလုဒ်လုပ်ပြီးပါပြီ။"
-        return None, "⚠️ Video Link မှ ဒေါင်းလုဒ်မရနိုင်ပါ။ Link မှန်ကန်မှု စစ်ဆေးပါ။"
-    return None, "⏳ အဆင်သင့်ဖြစ်ပါပြီ။"
+# Aspect Ratio အလိုက် Container နှင့် Video tag နှစ်ခုလုံးကို တိကျစွာ ထိန်းချုပ်မည့် CSS
+def get_ratio_css(ratio):
+    style_configs = {
+        "9:16": {"aspect": "9/16", "max_w": "260px"},
+        "16:9": {"aspect": "16/9", "max_w": "100%"},
+        "1:1":  {"aspect": "1/1",  "max_w": "300px"},
+        "3:4":  {"aspect": "3/4",  "max_w": "280px"}
+    }
+    cfg = style_configs.get(ratio, {"aspect": "9/16", "max_w": "260px"})
+    
+    return f"""
+    <style id="preview-ratio-style">
+    /* Video Box Wrapper တစ်ခုလုံးကို အချိုးကျဖြစ်စေခြင်း */
+    #all_preview_container {{
+        max-width: {cfg['max_w']} !important;
+        width: 100% !important;
+        margin: 0 auto !important;
+        transition: all 0.3s ease-in-out;
+    }}
+    
+    /* Gradio Video component အတွင်းရှိ inner wrapper အားလုံးကို ratio သတ်မှတ်ခြင်း */
+    #all_preview_container .wrap,
+    #all_preview_container .video-container,
+    #all_preview_container div[data-testid="video"] {{
+        aspect-ratio: {cfg['aspect']} !important;
+        width: 100% !important;
+        height: auto !important;
+        background: #000 !important;
+        border-radius: 8px !important;
+        overflow: hidden !important;
+    }}
+
+    /* Video player ကို container အချိုးအတိုင်း ဖြည့်ဆည်းစေခြင်း */
+    #all_preview_container video {{
+        aspect-ratio: {cfg['aspect']} !important;
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain !important; /* အချိုးမပျက် ဘေးမည်းဘားနှင့် အညီထားခြင်း */
+    }}
+    </style>
+    """
+
+def load_file_preview(video_file):
+    if video_file:
+        return video_file, "✅ ဗီဒီယိုဖိုင် Preview အဆင်သင့်ဖြစ်ပါပြီ။"
+    return None, "⏳ ဗီဒီယို မရွေးချယ်ရသေးပါ။"
+
+def load_link_preview(video_link):
+    if not video_link or not video_link.strip():
+        return None, "⚠️ Video Link ရိုက်ထည့်ပါ။"
+    downloaded = download_video_from_link(video_link)
+    if downloaded:
+        return downloaded, "✅ Link မှ ဗီဒီယို Preview ဒေါင်းလုဒ် ရရှိပါပြီ။"
+    return None, "⚠️ Link မှ ဒေါင်းလုဒ်မရနိုင်ပါ။ URL စစ်ဆေးပေးပါ။"
 
 def all_in_one_process(video_file, video_link, ratio):
     target_video = video_file if video_file else download_video_from_link(video_link)
     if not target_video:
         return None, "⚠️ ဗီဒီယိုဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
-    status_msg = f"✨ All-in-One Maker အောင်မြင်ပါသည်! (Ratio: {ratio})"
-    srt_file, zip_file = generate_srt_and_zip("Sample Script")
+    status_msg = f"✨ Video Recap အောင်မြင်ပါသည်! (Selected Ratio: {ratio})"
+    srt_file, zip_file = generate_srt_and_zip("Sample Myanmar Recap Script")
     return target_video, status_msg, srt_file, zip_file
 
-def update_video_ratio_style(ratio):
-    styles = {
-        "9:16": "max-width: 320px; margin: 0 auto; aspect-ratio: 9/16;",
-        "16:9": "max-width: 100%; aspect-ratio: 16/9;",
-        "1:1": "max-width: 400px; margin: 0 auto; aspect-ratio: 1/1;",
-        "3:4": "max-width: 350px; margin: 0 auto; aspect-ratio: 3/4;"
-    }
-    css_style = styles.get(ratio, "aspect-ratio: 9/16;")
-    return f"<style>.custom-video-player video, .custom-video-player {{ {css_style} }}</style>"
-
 with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
-    gr.Markdown("# 🎬 Real AI Movie Recap Studio Pro")
+    gr.Markdown("## 🎬 Real AI Movie Recap Studio Pro (Ratio Preview Supported)")
     
     with gr.Tabs():
         with gr.TabItem("🔑 API Key Setting"):
@@ -126,49 +158,60 @@ with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
             save_key_btn = gr.Button("💾 Key သိမ်းမည်", variant="primary")
             key_status = gr.Markdown("")
 
-        with gr.TabItem("🚀 3️⃣ All-in-One Video Maker (max 5 mins)"):
+        with gr.TabItem("🚀 All-in-One Video Maker"):
             with gr.Row():
                 with gr.Column(scale=1):
                     all_video_input = gr.Video(label="📹 ဗီဒီယိုဖိုင် တင်ရန်")
-                    all_video_link = gr.Textbox(label="🔗 Video URL Link (ထည့်ပြီး Enter ခေါက်ပါ)", placeholder="https://...")
-                    load_link_btn = gr.Button("🔍 Link မှ Preview ယူမည်")
-                    all_ratio = gr.Radio(choices=["9:16", "16:9", "1:1", "3:4"], value="9:16", label="📐 Aspect Ratio ရွေးရန်")
+                    all_video_link = gr.Textbox(label="🔗 ဗီဒီယို Link ထည့်ရန်", placeholder="https://...")
+                    load_link_btn = gr.Button("📲 Link မှ Preview ဆွဲယူမည်", variant="secondary")
+                    
+                    # 1:1, 3:4, 16:9, 9:16 ရွေးချယ်နိုင်သော Radio Box
+                    all_ratio = gr.Radio(
+                        choices=["9:16", "16:9", "1:1", "3:4"],
+                        value="9:16",
+                        label="📐 Aspect Ratio ရွေးရန်"
+                    )
                     all_gen_btn = gr.Button("🚀 🎬 Generate Video", variant="primary")
-                
+
                 with gr.Column(scale=1):
-                    all_preview_video = gr.Video(label="📺 Preview Video", elem_classes=["custom-video-player"])
-                    ratio_css_injection = gr.HTML("<style>.custom-video-player video, .custom-video-player { max-width: 320px; margin: 0 auto; aspect-ratio: 9/16; }</style>")
+                    # CSS Style ကို dynamically ပြောင်းမည့် placeholder
+                    ratio_css_injection = gr.HTML(get_ratio_css("9:16"))
+                    
+                    # id="all_preview_container" ဖြင့် သီးသန့် CSS ID ပေးထားသည်
+                    all_preview_video = gr.Video(
+                        label="📺 Preview Video",
+                        elem_id="all_preview_container"
+                    )
                     all_status = gr.Markdown("⏳ အဆင်သင့်ဖြစ်ပါပြီ။")
                     with gr.Row():
                         all_srt_down = gr.File(label="📄 SRT")
                         all_zip_down = gr.File(label="📦 ZIP")
 
-    # 1. API Key Saving
+    # Event Handlers
     save_key_btn.click(fn=save_api_key, inputs=api_key_input, outputs=key_status)
 
-    # 2. Aspect Ratio Style Update (Function နာမည် အမှန်ပြင်ထားသည်)
-    all_ratio.change(fn=update_video_ratio_style, inputs=all_ratio, outputs=ratio_css_injection)
+    # Ratio Radio ခလုတ် ရွေးလိုက်တိုင်း CSS Style ချက်ချင်း update လုပ်ခြင်း
+    all_ratio.change(
+        fn=get_ratio_css,
+        inputs=all_ratio,
+        outputs=ratio_css_injection
+    )
 
-    # 3. Video File တင်လိုက်လျှင် Preview တိုက်ရိုက်ပြခြင်း
+    # File Preview
     all_video_input.change(
-        fn=lambda v: (v, "✅ ဗီဒီယိုဖိုင် Preview အဆင်သင့်ဖြစ်ပါပြီ။" if v else "⏳"),
+        fn=load_file_preview,
         inputs=all_video_input,
         outputs=[all_preview_video, all_status]
     )
 
-    # 4. URL ထည့်ပြီး Enter ခေါက်လျှင် သို့မဟုတ် ခလုတ်နှိပ်လျှင် Preview ပြခြင်း
+    # Link Preview Button
     load_link_btn.click(
-        fn=lambda link: handle_video_preview(None, link),
-        inputs=all_video_link,
-        outputs=[all_preview_video, all_status]
-    )
-    all_video_link.submit(
-        fn=lambda link: handle_video_preview(None, link),
+        fn=load_link_preview,
         inputs=all_video_link,
         outputs=[all_preview_video, all_status]
     )
 
-    # 5. Generate Button
+    # Generate
     all_gen_btn.click(
         fn=all_in_one_process,
         inputs=[all_video_input, all_video_link, all_ratio],
@@ -177,4 +220,3 @@ with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)
-             
