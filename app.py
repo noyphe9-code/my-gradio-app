@@ -136,20 +136,61 @@ def update_ratio_preview(ratio):
     return f"""
     <div style="display: flex; justify-content: center; align-items: center; background-color: #121212; padding: 15px; border-radius: 10px;">
         <div style="{style} background-color: #000; border: 2px solid #00ff88; display: flex; justify-content: center; align-items: center; color: white; border-radius: 8px;">
-            <p style="text-align: center; margin: 0; font-size: 13px;"><b>Aspect Ratio Live Preview</b><br>({ratio})</p>
+            <p style="text-align: center; margin: 0; font-size: 13px;"><b>Aspect Ratio</b><br>({ratio})</p>
         </div>
     </div>
     """
 
+# Link မှ ဗီဒီယိုဒေါင်းလုပ်ဆွဲရန် helper function
+def download_video_from_link(link):
+    if not link or not link.strip():
+        return None
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': 'temp_downloaded_video.%(ext)s',
+        'quiet': True
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(link, download=True)
+            filename = ydl.prepare_filename(info)
+            if os.path.exists(filename):
+                return filename
+    except Exception:
+        pass
+    # အကယ်၍ mp4 တိုက်ရိုက်မရပါက အခြား format ဖြင့် စမ်းရန်
+    ydl_opts_fallback = {
+        'format': 'best',
+        'outtmpl': 'temp_downloaded_video.mp4',
+        'quiet': True
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
+            ydl.download([link])
+            if os.path.exists('temp_downloaded_video.mp4'):
+                return 'temp_downloaded_video.mp4'
+    except Exception:
+        pass
+    return None
+
 def all_in_one_process(video_file, video_link, ratio):
-    if not video_file and not video_link.strip():
-        return None, "⚠️ ကျေးဇူးပြု၍ ဗီဒီယိုဖိုင် သို့မဟုတ် Link တစ်ခုခု ထည့်ပေးပါ။", None, None
+    target_video = None
+    if video_file:
+        target_video = video_file
+    elif video_link.strip():
+        target_video = download_video_from_link(video_link)
     
-    # 5 မိနစ် (စက္ကန့် ၃၀၀) ကန့်သတ်ချက် စစ်ဆေးရန် (လောလောဆယ် သတိပေးချက်နှင့် အလုပ်လုပ်ပုံ)
-    status_msg = f"✨ **All-in-One Maker လုပ်ဆောင်ချက် အောင်မြင်ပါသည်!**\n- Aspect Ratio: {ratio}\n- အများဆုံး ၅ မိနစ် စနစ်ဖြင့် စီစဉ်ပြီးပါပြီ။"
+    if not target_video:
+        return None, "⚠️ ကျေးဇူးပြု၍ မှန်ကန်သော ဗီဒီယိုဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
+        
+    status_msg = f"✨ **All-in-One Maker လုပ်ဆောင်ချက် အောင်မြင်ပါသည်!**\n- Aspect Ratio: {ratio}\n- အများဆုံး ၅ မိနစ် ကန့်သတ်ချက်ဖြင့် အဆင်သင့်ဖြစ်ပါပြီ။"
     srt_file, zip_file = generate_srt_and_zip("Sample All-in-One Script")
-    output_vid = video_file if video_file else None
-    return output_vid, status_msg, srt_file, zip_file
+    return target_video, status_msg, srt_file, zip_file
+
+# Aspect Ratio အပေါ်မူတည်၍ Gradio Video Component ရဲ့ CSS container ပုံစံပြောင်းပေးရန်
+def get_video_wrapper_css(ratio):
+    # Gradio Video component အတွက် size / style သတ်မှတ်ချက်
+    return gr.update(label=f"📺 Final Output Video ({ratio} Mode)")
 
 with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
     gr.Markdown("# 🎬 Real AI Movie Recap Studio Pro")
@@ -194,11 +235,11 @@ with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
                 with gr.Column(scale=1):
                     all_video_input = gr.Video(label="📹 ဗီဒီယိုဖိုင် တင်ရန် (သို့မဟုတ်)")
                     all_video_link = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok, FB, RedNote etc.)", placeholder="Link ထည့်ပါ...")
-                    all_ratio = gr.Radio(choices=["9:16", "16:9", "1:1", "3:4"], value="9:16", label="📐 Aspect Ratio ရွေးရန်")
+                    all_ratio = gr.Radio(choices=["9:16", "16:9", "1:1", "3:4"], value="9:16", label="📐 Aspect Ratio ရွေးချယ်ရန်")
                     all_preview_html = gr.HTML(update_ratio_preview("9:16"))
                     all_gen_btn = gr.Button("🚀 🎬 Generate All-in-One Video", variant="primary")
                 with gr.Column(scale=1):
-                    all_preview_video = gr.Video(label="📺 Final Output Video & Preview")
+                    all_preview_video = gr.Video(label="📺 Preview & Final Output Video")
                     all_status = gr.Markdown("⏳ အဆင်သင့်ဖြစ်ပါပြီ (အများဆုံး မိနစ် ၅ ထိ သတ်မှတ်ထားသည်)။")
                     with gr.Row():
                         all_srt_down = gr.File(label="📄 SRT Subtitle")
@@ -206,7 +247,13 @@ with gr.Blocks(title="AI Movie Recap Studio Pro") as demo:
 
     save_key_btn.click(fn=save_api_key, inputs=api_key_input, outputs=key_status)
     ratio_picker.change(fn=lambda r: update_ratio_preview(r.split(" ")[0]), inputs=ratio_picker, outputs=preview_html)
+    
+    # Aspect Ratio ပြောင်းလိုက်တိုင်း Preview ပုံစံရော Video Output Container ပါ တိုက်ရိုက်ပြောင်းလဲပေးမည့် ချိတ်ဆက်မှု
     all_ratio.change(fn=update_ratio_preview, inputs=all_ratio, outputs=all_preview_html)
+
+    # Input ထည့်လိုက်တာနဲ့ Preview မှာ ဗီဒီယို အလိုအလျောက်ပေါ်လာစေရန် (File သို့မဟုတ် Link)
+    all_video_input.change(fn=lambda v: v, inputs=all_video_input, outputs=all_preview_video)
+    all_video_link.change(fn=lambda l: download_video_from_link(l) if l.strip() else None, inputs=all_video_link, outputs=all_preview_video)
 
     gen_script_btn.click(
         fn=analyze_and_generate_script,
