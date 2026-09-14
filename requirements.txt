@@ -1,0 +1,4 @@
+gradio
+edge-tts
+google-genai
+yt-dlp
