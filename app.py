@@ -14,43 +14,67 @@ import json
 from pathlib import Path
 
 from google import genai
+from google.genai import types
 
 
 # =========================================================
 # AI MOVIE RECAP STUDIO PRO
-# FULL VERSION
-# 1. VIDEO ANALYSIS
-# 2. BURMESE TTS
-# 3. VIDEO EDIT
+# OPTIMIZED ALL-IN-ONE VERSION
+#
+# VIDEO
+#   ↓
+# GEMINI VIDEO ANALYSIS
+#   ↓
+# BURMESE RECAP SCRIPT
+#   ↓
+# BURMESE TTS
+#   ↓
+# VIDEO EDIT
+#   ↓
+# SUBTITLE / LOGO / BLUR / AUDIO
+#   ↓
+# EXACT RATIO PREVIEW
+#   ↓
+# FINAL MP4
 # =========================================================
+
 
 APP_TITLE = "AI Movie Recap Studio Pro"
 
 MAX_VIDEO_MINUTES = 5
 
-# Render port
-PORT = int(os.environ.get("PORT", "7860"))
+PORT = int(
+    os.environ.get(
+        "PORT",
+        "7860"
+    )
+)
 
-# Gemini API Key
-SAVED_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+# Render Environment Variable
+SAVED_API_KEY = os.environ.get(
+    "GEMINI_API_KEY",
+    ""
+)
 
 
 # =========================================================
-# GEMINI MODELS
+# CURRENT GEMINI MODELS
 # =========================================================
 
 GEMINI_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
 ]
 
 
 # =========================================================
-# BURMESE TTS
+# BURMESE VOICES
 # =========================================================
 
 VOICES = {
+
     "Thiha (အမျိုးသားအသံ) - Natural":
         "my-MM-ThihaNeural",
 
@@ -60,14 +84,23 @@ VOICES = {
 
 
 # =========================================================
-# WORK DIRECTORY
+# WORKSPACE
 # =========================================================
 
-BASE_DIR = Path("studio_workspace")
-BASE_DIR.mkdir(exist_ok=True)
+BASE_DIR = Path(
+    "studio_workspace"
+)
+
+BASE_DIR.mkdir(
+    exist_ok=True
+)
 
 
-def unique_file(prefix, ext):
+def unique_file(
+    prefix,
+    ext
+):
+
     return str(
         BASE_DIR /
         f"{prefix}_{uuid.uuid4().hex[:10]}{ext}"
@@ -78,86 +111,142 @@ def unique_file(prefix, ext):
 # BASIC HELPERS
 # =========================================================
 
-def safe_float(value, default=0.0):
+def safe_float(
+    value,
+    default=0.0
+):
+
     try:
         return float(value)
+
     except Exception:
         return default
 
 
-def run_cmd(cmd, timeout=1800):
-    print("\nRUNNING:")
-    print(" ".join(str(x) for x in cmd))
+def run_cmd(
+    cmd,
+    timeout=1800
+):
 
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout,
+    print(
+        "\nRUNNING:"
     )
 
-    if result.returncode != 0:
-        print(result.stderr)
+    print(
+        " ".join(
+            str(x)
+            for x in cmd
+        )
+    )
+
+    try:
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+
+    except subprocess.TimeoutExpired:
+
         raise RuntimeError(
-            result.stderr[-5000:]
+            "FFmpeg process timeout."
+        )
+
+    if result.returncode != 0:
+
+        print(
+            result.stderr
+        )
+
+        raise RuntimeError(
+            result.stderr[-7000:]
         )
 
     return result
 
 
 def ffmpeg_exists():
-    return shutil.which("ffmpeg") is not None
+
+    return (
+        shutil.which(
+            "ffmpeg"
+        )
+        is not None
+    )
 
 
 def ffprobe_exists():
-    return shutil.which("ffprobe") is not None
+
+    return (
+        shutil.which(
+            "ffprobe"
+        )
+        is not None
+    )
 
 
 # =========================================================
 # API KEY
 # =========================================================
 
-def save_api_key(api_key):
+def save_api_key(
+    api_key
+):
+
     global SAVED_API_KEY
 
-    if api_key and api_key.strip():
-        SAVED_API_KEY = api_key.strip()
+    if (
+        api_key
+        and
+        api_key.strip()
+    ):
+
+        SAVED_API_KEY = (
+            api_key.strip()
+        )
 
         return (
             "✅ Gemini API Key သိမ်းပြီးပါပြီ။"
         )
 
     return (
-        "⚠️ Gemini API Key ထည့်ပေးပါ။"
+        "⚠️ Gemini API Key ထည့်ပါ။"
     )
 
 
 # =========================================================
-# VIDEO DURATION
+# VIDEO INFO
 # =========================================================
 
-def get_video_duration(video_path):
+def get_video_info(
+    video_path
+):
 
     if not video_path:
-        return None
+        return {}
 
-    if not os.path.exists(video_path):
-        return None
+    if not os.path.exists(
+        video_path
+    ):
+        return {}
 
     if not ffprobe_exists():
-        return None
+        return {}
 
     try:
+
         result = subprocess.run(
             [
                 "ffprobe",
                 "-v",
                 "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
                 video_path,
             ],
             stdout=subprocess.PIPE,
@@ -166,45 +255,101 @@ def get_video_duration(video_path):
             timeout=30,
         )
 
-        if result.returncode == 0:
-            value = result.stdout.strip()
+        if result.returncode != 0:
+            return {}
 
-            if value:
-                return float(value)
-
-    except Exception as e:
-        print("Duration Error:", e)
-
-    return None
-
-
-def validate_video_duration(video_path):
-
-    duration = get_video_duration(video_path)
-
-    if duration is None:
-        return True, (
-            "ℹ️ Video duration ကို "
-            "စစ်ဆေး၍မရသေးပါ။"
+        return json.loads(
+            result.stdout
         )
 
-    minutes = duration / 60
+    except Exception:
+        return {}
 
-    if minutes > MAX_VIDEO_MINUTES:
+
+def get_video_duration(
+    video_path
+):
+
+    info = get_video_info(
+        video_path
+    )
+
+    try:
+
+        return float(
+            info[
+                "format"
+            ][
+                "duration"
+            ]
+        )
+
+    except Exception:
+        return None
+
+
+def has_audio_stream(
+    video_path
+):
+
+    info = get_video_info(
+        video_path
+    )
+
+    for stream in info.get(
+        "streams",
+        []
+    ):
+
+        if (
+            stream.get(
+                "codec_type"
+            )
+            ==
+            "audio"
+        ):
+
+            return True
+
+    return False
+
+
+def validate_video_duration(
+    video_path
+):
+
+    duration = get_video_duration(
+        video_path
+    )
+
+    if duration is None:
+
+        return (
+            True,
+            "ℹ️ Video duration စစ်ဆေး၍မရပါ။"
+        )
+
+    minutes = (
+        duration / 60
+    )
+
+    if (
+        minutes
+        >
+        MAX_VIDEO_MINUTES
+    ):
+
         return (
             False,
             (
-                f"⚠️ Video သည် "
-                f"{minutes:.1f} မိနစ်ရှိပါတယ်။\n\n"
-                f"အများဆုံး "
-                f"{MAX_VIDEO_MINUTES} မိနစ်အထိသာ "
-                f"အသုံးပြုနိုင်ပါတယ်။"
-            ),
+                f"⚠️ Video {minutes:.1f} minutes ရှိပါတယ်။\n"
+                f"အများဆုံး {MAX_VIDEO_MINUTES} minutes ပါ။"
+            )
         )
 
     return (
         True,
-        f"✅ Video Length: {minutes:.1f} မိနစ်"
+        f"✅ Video Length: {minutes:.1f} minutes"
     )
 
 
@@ -212,123 +357,242 @@ def validate_video_duration(video_path):
 # CLEAN SCRIPT
 # =========================================================
 
-def clean_script_for_tts(script_text):
+def clean_script_for_tts(
+    script_text
+):
 
     if not script_text:
         return ""
 
-    lines = script_text.splitlines()
-    cleaned = []
+    lines = []
 
-    for line in lines:
+    for line in script_text.splitlines():
 
         line = line.strip()
 
         if not line:
             continue
 
-        line = line.replace("**", "")
-        line = line.replace("__", "")
-        line = line.replace("`", "")
+        line = (
+            line
+            .replace("**", "")
+            .replace("__", "")
+            .replace("`", "")
+        )
 
         line = re.sub(
             r"^\s*\[(?:Visual|Scene|Video|Audio|Camera|Action|Narration|Narrator|Dialogue)\]\s*[:\-]?\s*",
             "",
             line,
-            flags=re.IGNORECASE,
+            flags=re.IGNORECASE
         )
 
         line = re.sub(
-            r"^\s*Narrator\s*:\s*",
+            r"^\s*(Narrator|Narration)\s*:\s*",
             "",
             line,
-            flags=re.IGNORECASE,
+            flags=re.IGNORECASE
         )
+
+        if line.startswith(
+            "---"
+        ):
+            continue
 
         if line.lower() in [
             "movie recap",
             "recap script",
             "burmese recap script",
             "script",
+            "characters",
+            "important events",
         ]:
             continue
 
-        if line.startswith("---"):
-            continue
+        lines.append(
+            line
+        )
 
-        cleaned.append(line)
-
-    return "\n".join(cleaned)
+    return "\n".join(
+        lines
+    ).strip()
 
 
 # =========================================================
 # SRT
 # =========================================================
 
-def seconds_to_srt_time(seconds):
+def seconds_to_srt_time(
+    seconds
+):
 
-    seconds = max(0, int(seconds))
+    seconds = max(
+        0,
+        float(seconds)
+    )
 
-    hours = seconds // 3600
+    total_ms = int(
+        seconds * 1000
+    )
+
+    hours = (
+        total_ms
+        //
+        3600000
+    )
 
     minutes = (
-        seconds % 3600
-    ) // 60
+        total_ms
+        %
+        3600000
+    ) // 60000
 
-    secs = seconds % 60
+    secs = (
+        total_ms
+        %
+        60000
+    ) // 1000
+
+    ms = (
+        total_ms
+        %
+        1000
+    )
 
     return (
         f"{hours:02d}:"
         f"{minutes:02d}:"
-        f"{secs:02d},000"
+        f"{secs:02d},"
+        f"{ms:03d}"
     )
 
 
-def generate_srt_and_zip(script_text):
+def split_script_sentences(
+    text
+):
+
+    text = clean_script_for_tts(
+        text
+    )
+
+    if not text:
+        return []
+
+    # Keep Burmese sentences reasonably small
+    parts = re.split(
+        r"(?<=[။!?])\s+|\n+",
+        text
+    )
+
+    result = []
+
+    for part in parts:
+
+        part = part.strip()
+
+        if part:
+            result.append(
+                part
+            )
+
+    return result
+
+
+def generate_srt_content(
+    script_text,
+    audio_duration=None
+):
 
     clean_text = clean_script_for_tts(
         script_text
     )
 
     if not clean_text:
-        return None, None
+        return ""
 
-    lines = [
-        x.strip()
-        for x in clean_text.splitlines()
-        if x.strip()
+    sentences = (
+        split_script_sentences(
+            clean_text
+        )
+    )
+
+    if not sentences:
+        return ""
+
+    if not audio_duration:
+        audio_duration = max(
+            5,
+            len(clean_text) / 10
+        )
+
+    weights = [
+        max(
+            1,
+            len(sentence)
+        )
+        for sentence in sentences
     ]
 
-    srt_content = ""
+    total_weight = sum(
+        weights
+    )
 
-    current_time = 0
-    subtitle_index = 1
+    current = 0.0
 
-    for line in lines:
+    output = []
 
-        char_count = len(line)
+    for index, sentence in enumerate(
+        sentences,
+        start=1
+    ):
 
-        duration = max(
-            2,
-            min(
-                8,
-                round(char_count / 11)
-            )
+        duration = (
+            audio_duration
+            *
+            weights[index - 1]
+            /
+            total_weight
         )
 
-        start_time = current_time
-        end_time = current_time + duration
+        start = current
 
-        srt_content += (
-            f"{subtitle_index}\n"
-            f"{seconds_to_srt_time(start_time)} "
-            f"--> "
-            f"{seconds_to_srt_time(end_time)}\n"
-            f"{line}\n\n"
+        end = (
+            current
+            +
+            duration
         )
 
-        current_time = end_time
-        subtitle_index += 1
+        output.append(
+            f"{index}\n"
+            f"{seconds_to_srt_time(start)} --> "
+            f"{seconds_to_srt_time(end)}\n"
+            f"{sentence}\n"
+        )
+
+        current = end
+
+    return "\n".join(
+        output
+    )
+
+
+def generate_srt_and_zip(
+    script_text,
+    audio_duration=None
+):
+
+    srt_content = (
+        generate_srt_content(
+            script_text,
+            audio_duration
+        )
+    )
+
+    if not srt_content:
+        return (
+            None,
+            None
+        )
 
     srt_filename = unique_file(
         "subtitle",
@@ -340,22 +604,22 @@ def generate_srt_and_zip(script_text):
         ".zip"
     )
 
-    with open(
-        srt_filename,
-        "w",
+    Path(
+        srt_filename
+    ).write_text(
+        srt_content,
         encoding="utf-8-sig"
-    ) as f:
-        f.write(srt_content)
+    )
 
     with zipfile.ZipFile(
         zip_filename,
         "w",
         zipfile.ZIP_DEFLATED
-    ) as zipf:
+    ) as z:
 
-        zipf.write(
+        z.write(
             srt_filename,
-            arcname="myanmar_recap_subtitle.srt"
+            "myanmar_recap_subtitle.srt"
         )
 
     return (
@@ -365,10 +629,12 @@ def generate_srt_and_zip(script_text):
 
 
 # =========================================================
-# DOWNLOAD VIDEO
+# VIDEO DOWNLOAD
 # =========================================================
 
-def download_video_from_link(link):
+def download_video_from_link(
+    link
+):
 
     if not link:
         return None
@@ -384,6 +650,7 @@ def download_video_from_link(link):
     )
 
     ydl_opts = {
+
         "format":
             "bestvideo[height<=1080]+bestaudio/"
             "best[height<=1080]/best",
@@ -424,24 +691,30 @@ def download_video_from_link(link):
                 )
             )
 
-            if os.path.exists(filename):
+            if os.path.exists(
+                filename
+            ):
                 return filename
 
             base = os.path.splitext(
                 filename
             )[0]
 
-            possible_files = [
-                base + ".mp4",
-                base + ".mkv",
-                base + ".webm",
-                base + ".mov",
-            ]
+            for ext in [
+                ".mp4",
+                ".mkv",
+                ".webm",
+                ".mov"
+            ]:
 
-            for file_path in possible_files:
+                candidate = (
+                    base + ext
+                )
 
-                if os.path.exists(file_path):
-                    return file_path
+                if os.path.exists(
+                    candidate
+                ):
+                    return candidate
 
     except Exception as e:
 
@@ -453,16 +726,33 @@ def download_video_from_link(link):
     return None
 
 
-# =========================================================
-# GET VIDEO INPUT
-# =========================================================
-
-def resolve_video(video_file, video_link):
+def resolve_video(
+    video_file,
+    video_link
+):
 
     if video_file:
-        return video_file
+
+        if isinstance(
+            video_file,
+            dict
+        ):
+
+            video_file = (
+                video_file.get(
+                    "path"
+                )
+                or
+                video_file.get(
+                    "name"
+                )
+            )
+
+        if video_file:
+            return video_file
 
     if video_link:
+
         return download_video_from_link(
             video_link
         )
@@ -474,300 +764,246 @@ def resolve_video(video_file, video_link):
 # RATIO
 # =========================================================
 
-def ratio_values(ratio):
+RATIO_SIZES = {
 
-    values = {
-        "9:16": (9, 16),
-        "3:4": (3, 4),
-        "1:1": (1, 1),
-        "16:9": (16, 9),
-    }
+    "9:16":
+        (1080, 1920),
 
-    return values.get(
+    "3:4":
+        (1080, 1440),
+
+    "1:1":
+        (1080, 1080),
+
+    "16:9":
+        (1920, 1080),
+}
+
+
+def ratio_size(
+    ratio
+):
+
+    return RATIO_SIZES.get(
         ratio,
-        (9, 16)
+        RATIO_SIZES["9:16"]
     )
 
 
-def get_ratio_css(ratio):
+def get_ratio_css(
+    ratio
+):
 
-    configs = {
-
-        "9:16": {
-            "aspect": "9 / 16",
-            "max_width": "360px",
-        },
-
-        "3:4": {
-            "aspect": "3 / 4",
-            "max_width": "420px",
-        },
-
-        "1:1": {
-            "aspect": "1 / 1",
-            "max_width": "500px",
-        },
-
-        "16:9": {
-            "aspect": "16 / 9",
-            "max_width": "650px",
-        },
-    }
-
-    cfg = configs.get(
-        ratio,
-        configs["9:16"]
+    width, height = ratio_size(
+        ratio
     )
 
     return f"""
-<style>
-#edit_preview_container {{
-    width:100%!important;
-    max-width:{cfg["max_width"]}!important;
-    margin:auto!important;
-}}
-
-#edit_preview_container video {{
-    width:100%!important;
-    aspect-ratio:{cfg["aspect"]}!important;
-    object-fit:contain!important;
-    background:#000!important;
-}}
-</style>
-"""
-
-
-# =========================================================
-# PREVIEW UPLOAD
-# =========================================================
-
-def preview_uploaded_video(video_file):
-
-    if not video_file:
-        return None
-
-    return video_file
-
-
-def load_link_preview(link):
-
-    if not link:
-        return None
-
-    return download_video_from_link(
-        link
-    )
+    <div style="
+        width:100%;
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        background:#111;
+        padding:15px;
+        box-sizing:border-box;
+    ">
+        <div style="
+            aspect-ratio:{width}/{height};
+            width:min(100%,700px);
+            max-height:70vh;
+            background:#000;
+            overflow:hidden;
+        ">
+            <div style="
+                width:100%;
+                height:100%;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                color:#aaa;
+                font-size:14px;
+            ">
+                {ratio} — {width} × {height}
+            </div>
+        </div>
+    </div>
+    """
 
 
 # =========================================================
-# RECAP PROMPT
+# GEMINI PROMPT
 # =========================================================
 
-def build_recap_prompt(
-    selected_ratio
+def build_fast_recap_prompt(
+    ratio
 ):
 
     return f"""
-You are a Professional Movie Recap Creator.
+You are a professional movie recap writer.
 
-Analyze the supplied video from beginning
-to end.
+Analyze this video from beginning to end.
 
-Target aspect ratio:
-{selected_ratio}
+Target output:
+Burmese social-media movie recap.
 
-Write a natural Burmese Movie Recap Script.
+Target ratio:
+{ratio}
 
 IMPORTANT:
+1. Use only events actually visible or audible.
+2. Never invent story details.
+3. Never invent character names.
+4. Never invent relationships.
+5. Never invent dialogue.
+6. If dialogue is clearly understandable, naturally translate its meaning into Burmese.
+7. If dialogue is unclear, describe the visible action instead.
+8. Follow the actual timeline.
+9. Include important beginning, middle and ending events.
+10. Make the script natural for Burmese TTS.
+11. Do not output analysis.
+12. Do not output headings.
+13. Do not output timestamps.
+14. Return ONLY the final Burmese recap script.
 
-Do NOT invent events.
+STYLE:
 
-Do NOT invent character names.
-
-Do NOT invent relationships.
-
-Do NOT invent dialogue.
-
-Do NOT invent locations.
-
-Only describe things that can actually be
-seen or heard in the video.
-
-The style must NOT be narrator-only.
+Start directly with an interesting event.
 
 Use a mixture of:
+- visible action
+- short narration
+- natural character dialogue
+- character reaction
+- next action
 
-VISUAL ACTION
-+
-NARRATOR DESCRIPTION
-+
-ACTUAL CHARACTER DIALOGUE
-+
-CHARACTER REACTION
-+
-NEXT ACTION
+Do not make every sentence narrator-only.
 
-Example style:
+Keep sentences short and TTS friendly.
 
-ကောင်လေးက အခန်းထဲကို ဖြည်းဖြည်းဝင်လာပြီး
-မိန်းကလေးရှေ့မှာ ရပ်လိုက်ပါတယ်။
+Avoid:
+"တစ်နေ့မှာ..."
+"ဒီဇာတ်ကားမှာတော့..."
+"နောက်ဆုံးမှာတော့..."
 
-နင် ဒီကို ဘာလာလုပ်တာလဲ?
+Write a continuous story.
 
-ငါ မင်းကို ပြောစရာရှိလို့။
+Do not explain what you are doing.
 
-သူတို့နှစ်ယောက် စကားပြောနေတုန်းမှာပဲ
-အပြင်ဘက်ကနေ အသံတစ်ခု ထွက်လာပါတယ်။
-
-Dialogue must be translated naturally
-into Burmese when the original dialogue
-is English, Chinese, Japanese, Korean,
-Thai or another language.
-
-Do not create dialogue if it is unclear.
-
-Describe visible action instead.
-
-Use natural spoken Burmese.
-
-Avoid generic phrases such as:
-
-တစ်နေ့မှာ...
-ဒီဇာတ်ကားမှာတော့...
-နောက်ဆုံးမှာ...
-အဓိကဇာတ်ကောင်က...
-
-Keep the story engaging.
-
-Include the complete ending.
-
-Make the script TTS friendly.
-
-Do not output technical labels.
-
-Return only the final Burmese recap script.
+Return ONLY Burmese recap text.
 """
 
 
 # =========================================================
-# ERROR DETECTION
+# GEMINI RETRY
 # =========================================================
 
-def is_retryable_error(error):
+def retryable_error(
+    error
+):
 
-    text = str(error).lower()
-
-    words = [
-        "503",
-        "unavailable",
-        "high demand",
-        "service unavailable",
-        "429",
-        "resource_exhausted",
-        "500",
-        "internal server error",
-        "504",
-        "deadline_exceeded",
-        "timeout",
-        "temporarily",
-    ]
+    text = str(
+        error
+    ).lower()
 
     return any(
         x in text
-        for x in words
+        for x in [
+            "429",
+            "500",
+            "503",
+            "504",
+            "unavailable",
+            "resource_exhausted",
+            "timeout",
+            "deadline",
+            "temporarily"
+        ]
     )
 
 
-# =========================================================
-# GEMINI GENERATE
-# =========================================================
-
-def generate_with_retry(
+def generate_script_fast(
     client,
     uploaded_file,
     prompt
 ):
 
-    retry_delays = [
-        5,
-        10,
-        20,
-        40,
-    ]
-
     last_error = None
 
-    for model_index, model_name in enumerate(
-        GEMINI_MODELS
-    ):
+    for model in GEMINI_MODELS:
 
-        print(
-            f"Trying model: {model_name}"
-        )
-
-        for attempt in range(
-            len(retry_delays) + 1
-        ):
+        for attempt in range(3):
 
             try:
 
+                # Low thinking = faster recap generation
+                config = (
+                    types.GenerateContentConfig(
+                        thinking_config=(
+                            types.ThinkingConfig(
+                                thinking_level="low"
+                            )
+                        ),
+                        temperature=0.4,
+                    )
+                )
+
                 response = (
                     client.models.generate_content(
-                        model=model_name,
+                        model=model,
                         contents=[
                             uploaded_file,
                             prompt
                         ],
+                        config=config
                     )
                 )
 
-                if response and response.text:
+                if (
+                    response
+                    and
+                    response.text
+                    and
+                    response.text.strip()
+                ):
+
                     return (
-                        response.text,
-                        model_name
+                        response.text.strip(),
+                        model
                     )
 
                 raise RuntimeError(
-                    "Empty Gemini response"
+                    "Gemini Empty Response"
                 )
 
             except Exception as e:
 
                 last_error = e
 
-                if not is_retryable_error(e):
+                print(
+                    f"{model} attempt {attempt+1}:",
+                    e
+                )
+
+                if not retryable_error(
+                    e
+                ):
+
                     break
 
-                if attempt < len(retry_delays):
-
-                    delay = (
-                        retry_delays[attempt]
-                    )
-
-                    delay += random.uniform(
-                        0,
-                        2
-                    )
-
-                    print(
-                        f"Retrying in {delay:.1f}s"
-                    )
-
-                    time.sleep(delay)
-
-        if model_index < len(
-            GEMINI_MODELS
-        ) - 1:
-
-            time.sleep(2)
+                time.sleep(
+                    3
+                    +
+                    attempt * 4
+                )
 
     raise RuntimeError(
-        f"All Gemini models failed.\n{last_error}"
+        f"Gemini failed: {last_error}"
     )
 
 
 # =========================================================
-# MAIN ANALYSIS
+# GEMINI VIDEO ANALYSIS
 # =========================================================
 
 def analyze_and_generate_script(
@@ -782,39 +1018,42 @@ def analyze_and_generate_script(
 
         return (
             "",
-            "⚠️ Gemini API Key မရှိသေးပါ။",
+            "⚠️ Gemini API Key မရှိပါ။",
             None,
             None,
+            None
         )
 
-    target_media = resolve_video(
+    source = resolve_video(
         video_file,
         video_link
     )
 
-    if not target_media:
+    if not source:
 
         return (
             "",
-            "⚠️ Video File သို့မဟုတ် URL ထည့်ပါ။",
+            "⚠️ Video Upload သို့မဟုတ် URL ထည့်ပါ။",
             None,
             None,
+            None
         )
 
     if not os.path.exists(
-        target_media
+        source
     ):
 
         return (
             "",
-            "⚠️ Video File ရှာမတွေ့ပါ။",
+            "⚠️ Video file မတွေ့ပါ။",
             None,
             None,
+            None
         )
 
-    valid, duration_message = (
+    valid, message = (
         validate_video_duration(
-            target_media
+            source
         )
     )
 
@@ -822,9 +1061,10 @@ def analyze_and_generate_script(
 
         return (
             "",
-            duration_message,
+            message,
             None,
             None,
+            source
         )
 
     try:
@@ -833,140 +1073,124 @@ def analyze_and_generate_script(
             api_key=SAVED_API_KEY
         )
 
-    except Exception as e:
-
-        return (
-            "",
-            f"⚠️ Gemini Client Error:\n{e}",
-            None,
-            None,
+        print(
+            "Uploading video to Gemini..."
         )
 
-    try:
-
-        uploaded_file = client.files.upload(
-            file=target_media
+        uploaded = (
+            client.files.upload(
+                file=source
+            )
         )
-
-    except Exception as e:
-
-        return (
-            "",
-            f"⚠️ Video Upload Error:\n{e}",
-            None,
-            None,
-        )
-
-    try:
 
         start = time.time()
 
         while True:
 
-            state_name = (
-                uploaded_file.state.name
-                if uploaded_file.state
-                else ""
-            )
+            state = ""
+
+            if uploaded.state:
+
+                state = (
+                    uploaded.state.name
+                )
 
             print(
-                "Gemini State:",
-                state_name
+                "Gemini:",
+                state
             )
 
-            if state_name == "ACTIVE":
+            if state == "ACTIVE":
                 break
 
-            if state_name == "FAILED":
+            if state == "FAILED":
 
-                return (
-                    "",
-                    "⚠️ Gemini Video Processing Failed.",
-                    None,
-                    None,
+                raise RuntimeError(
+                    "Gemini Video Processing Failed."
                 )
 
-            if time.time() - start > 900:
+            if (
+                time.time() - start
+                >
+                600
+            ):
 
-                return (
-                    "",
-                    "⚠️ Video Processing Timeout.",
-                    None,
-                    None,
+                raise RuntimeError(
+                    "Gemini Video Processing Timeout."
                 )
 
-            time.sleep(5)
-
-            uploaded_file = client.files.get(
-                name=uploaded_file.name
+            time.sleep(
+                3
             )
 
-    except Exception as e:
+            uploaded = (
+                client.files.get(
+                    name=uploaded.name
+                )
+            )
 
-        return (
-            "",
-            f"⚠️ Processing Error:\n{e}",
-            None,
-            None,
+        prompt = (
+            build_fast_recap_prompt(
+                ratio_choice
+            )
         )
 
-    try:
-
-        prompt = build_recap_prompt(
-            ratio_choice
+        print(
+            "Generating recap..."
         )
 
-        script_text, used_model = (
-            generate_with_retry(
+        script, used_model = (
+            generate_script_fast(
                 client,
-                uploaded_file,
+                uploaded,
                 prompt
             )
         )
 
-        clean_text = (
-            clean_script_for_tts(
-                script_text
-            )
+        script = clean_script_for_tts(
+            script
         )
 
-        if not clean_text:
+        if not script:
 
-            return (
-                "",
-                "⚠️ Script မရပါ။",
-                None,
-                None,
+            raise RuntimeError(
+                "Gemini Script Empty."
             )
 
         srt_file, zip_file = (
             generate_srt_and_zip(
-                clean_text
+                script
             )
         )
 
         status = (
-            "## ✅ Script ပြီးပါပြီ\n\n"
-            f"{duration_message}\n\n"
+            "## ✅ Script Ready\n\n"
+            f"{message}\n\n"
             f"🤖 Model: `{used_model}`\n\n"
-            "🎙️ Narrator + Dialogue + "
-            "Visual Storytelling"
+            "⚡ Fast Video Recap Mode"
         )
 
         return (
-            clean_text,
+            script,
             status,
             srt_file,
-            zip_file
+            zip_file,
+            source
         )
 
     except Exception as e:
 
+        print(
+            "Analysis Error:",
+            e
+        )
+
         return (
             "",
-            f"⚠️ Script Error:\n{e}",
+            f"❌ Script Error:\n\n{e}",
             None,
-            None
+            None,
+            source
         )
 
 
@@ -974,98 +1198,100 @@ def analyze_and_generate_script(
 # TTS
 # =========================================================
 
-async def generate_myanmar_tts(
+async def make_tts(
     text,
-    voice_choice,
-    speed_percent
+    voice_name,
+    speed
 ):
 
-    if not text or not text.strip():
+    if not text:
+        return None
 
-        return (
-            None,
-            None,
-            None,
-            None
-        )
-
-    clean_text = (
-        clean_script_for_tts(
-            text
-        )
+    text = clean_script_for_tts(
+        text
     )
 
-    selected_voice = VOICES.get(
-        voice_choice,
+    voice = VOICES.get(
+        voice_name,
         "my-MM-ThihaNeural"
     )
 
-    rate_str = (
-        f"{int(speed_percent):+d}%"
-    )
-
-    output_filename = unique_file(
-        "recap_voice",
+    output = unique_file(
+        "voice",
         ".mp3"
     )
 
-    try:
+    rate = (
+        f"{int(speed):+d}%"
+    )
 
-        communicate = edge_tts.Communicate(
-            clean_text,
-            selected_voice,
-            rate=rate_str
-        )
+    communicate = edge_tts.Communicate(
+        text,
+        voice,
+        rate=rate
+    )
 
-        await communicate.save(
-            output_filename
-        )
+    await communicate.save(
+        output
+    )
 
-        srt_file, zip_file = (
-            generate_srt_and_zip(
-                clean_text
-            )
-        )
+    if not os.path.exists(
+        output
+    ):
+        return None
 
-        return (
-            output_filename,
-            output_filename,
-            srt_file,
-            zip_file
-        )
-
-    except Exception as e:
-
-        print("TTS Error:", e)
-
-        return (
-            None,
-            None,
-            None,
-            None
-        )
+    return output
 
 
 def tts_interface(
     text,
-    voice_choice,
+    voice,
     speed
 ):
 
     try:
 
-        return asyncio.run(
-            generate_myanmar_tts(
+        audio = asyncio.run(
+            make_tts(
                 text,
-                voice_choice,
+                voice,
                 speed
             )
+        )
+
+        if not audio:
+
+            return (
+                None,
+                None,
+                None,
+                None
+            )
+
+        duration = (
+            get_audio_duration(
+                audio
+            )
+        )
+
+        srt, zip_file = (
+            generate_srt_and_zip(
+                text,
+                duration
+            )
+        )
+
+        return (
+            audio,
+            audio,
+            srt,
+            zip_file
         )
 
     except Exception as e:
 
         print(
-            "TTS Interface Error:",
+            "TTS Error:",
             e
         )
 
@@ -1077,8 +1303,45 @@ def tts_interface(
         )
 
 
+def get_audio_duration(
+    audio
+):
+
+    if not audio:
+        return None
+
+    try:
+
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                audio
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        if result.returncode == 0:
+
+            return float(
+                result.stdout.strip()
+            )
+
+    except Exception:
+        pass
+
+    return None
+
+
 # =========================================================
-# SUBTITLE TRANSLATION
+# TRANSLATE SUBTITLE
 # =========================================================
 
 def translate_script(
@@ -1086,13 +1349,13 @@ def translate_script(
     language
 ):
 
-    if not text:
-        return ""
+    if (
+        not text
+        or
+        language == "Myanmar"
+    ):
 
-    if language == "Myanmar":
         return text
-
-    global SAVED_API_KEY
 
     if not SAVED_API_KEY:
         return text
@@ -1112,31 +1375,42 @@ def translate_script(
         )
 
         prompt = f"""
-Translate the following movie recap script
-into natural {language_name}.
+Translate this movie recap into natural {language_name}.
 
-Keep the same meaning.
-Do not add information.
-Keep dialogue natural.
-Return only translated text.
-
-SCRIPT:
+Rules:
+- Preserve meaning.
+- Do not add information.
+- Do not remove information.
+- Keep dialogue natural.
+- Return only translated text.
 
 {text}
 """
 
-        response = client.models.generate_content(
-            model=GEMINI_MODELS[0],
-            contents=prompt
+        response = (
+            client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level="low"
+                    )
+                )
+            )
         )
 
-        if response and response.text:
-            return response.text
+        if (
+            response
+            and
+            response.text
+        ):
+
+            return response.text.strip()
 
     except Exception as e:
 
         print(
-            "Subtitle Translation Error:",
+            "Translation error:",
             e
         )
 
@@ -1144,90 +1418,197 @@ SCRIPT:
 
 
 # =========================================================
-# FONT / COLOR HELPERS
+# SUBTITLE
 # =========================================================
 
 COLOR_MAP = {
 
-    "White": "white",
-    "Black": "black",
-    "Red": "red",
-    "Yellow": "yellow",
-    "Green": "green",
-    "Blue": "blue",
-    "Orange": "orange",
-    "Pink": "pink",
-    "Purple": "purple",
-    "Cyan": "cyan",
+    "White": "&H00FFFFFF",
+    "Black": "&H00000000",
+    "Red": "&H000000FF",
+    "Yellow": "&H0000FFFF",
+    "Green": "&H0000FF00",
+    "Blue": "&H00FF0000",
+    "Orange": "&H000080FF",
+    "Pink": "&H00CBC0FF",
+    "Purple": "&H00800080",
+    "Cyan": "&H00FFFF00",
 }
 
 
-def escape_drawtext(text):
+def srt_to_ass(
+    srt_file,
+    font_name,
+    font_size,
+    text_color,
+    outline_color,
+    outline_width,
+    x_percent,
+    y_percent,
+    width,
+    height
+):
+
+    if not srt_file:
+        return None
+
+    content = Path(
+        srt_file
+    ).read_text(
+        encoding="utf-8-sig"
+    )
+
+    # Convert percentage to actual output coordinates
+    x = int(
+        width
+        *
+        safe_float(
+            x_percent,
+            50
+        )
+        /
+        100
+    )
+
+    y = int(
+        height
+        *
+        safe_float(
+            y_percent,
+            85
+        )
+        /
+        100
+    )
+
+    ass_file = unique_file(
+        "subtitle",
+        ".ass"
+    )
+
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        f"PlayResX: {width}",
+        f"PlayResY: {height}",
+        "ScaledBorderAndShadow: yes",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        (
+            "Style: Default,"
+            f"{font_name},"
+            f"{int(font_size)},"
+            f"{COLOR_MAP.get(text_color, COLOR_MAP['White'])},"
+            f"{COLOR_MAP.get(text_color, COLOR_MAP['White'])},"
+            f"{COLOR_MAP.get(outline_color, COLOR_MAP['Black'])},"
+            "&H80000000,"
+            "0,0,0,0,100,100,0,0,1,"
+            f"{int(outline_width)},"
+            "0,2,20,20,20,1"
+        ),
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+    ]
+
+    blocks = re.split(
+        r"\n\s*\n",
+        content.strip()
+    )
+
+    for block in blocks:
+
+        rows = block.splitlines()
+
+        if len(rows) < 3:
+            continue
+
+        timing = rows[1]
+
+        match = re.match(
+            r"(.+?)\s*-->\s*(.+)",
+            timing
+        )
+
+        if not match:
+            continue
+
+        start = (
+            match.group(1)
+            .replace(",", ".")
+        )
+
+        end = (
+            match.group(2)
+            .replace(",", ".")
+        )
+
+        text = (
+            "\\N".join(
+                rows[2:]
+            )
+        )
+
+        text = (
+            text
+            .replace(
+                "{",
+                "\\{"
+            )
+            .replace(
+                "}",
+                "\\}"
+            )
+        )
+
+        # EXACT X/Y position
+        text = (
+            f"{{\\pos({x},{y})}}"
+            +
+            text
+        )
+
+        lines.append(
+            "Dialogue: 0,"
+            f"{start},"
+            f"{end},"
+            "Default,,0,0,0,,"
+            f"{text}"
+        )
+
+    Path(
+        ass_file
+    ).write_text(
+        "\n".join(lines),
+        encoding="utf-8"
+    )
+
+    return ass_file
+
+
+# =========================================================
+# FFMPEG PATH ESCAPE
+# =========================================================
+
+def escape_filter_path(
+    path
+):
 
     return (
-        str(text)
+        str(path)
         .replace("\\", "\\\\")
         .replace(":", "\\:")
         .replace("'", "\\'")
         .replace(",", "\\,")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
     )
-
-
-def find_font():
-
-    candidates = [
-
-        "/usr/share/fonts/truetype/noto/"
-        "NotoSansMyanmar-Regular.ttf",
-
-        "/usr/share/fonts/truetype/"
-        "noto/NotoSansMyanmar-Regular.ttf",
-
-        "/usr/share/fonts/truetype/dejavu/"
-        "DejaVuSans.ttf",
-
-        "/usr/share/fonts/truetype/liberation2/"
-        "LiberationSans-Regular.ttf",
-    ]
-
-    for path in candidates:
-
-        if os.path.exists(path):
-            return path
-
-    return None
-
-
-# =========================================================
-# CREATE SUBTITLE FILE
-# =========================================================
-
-def make_subtitle_file(
-    script,
-    language
-):
-
-    translated = translate_script(
-        script,
-        language
-    )
-
-    srt_file, zip_file = (
-        generate_srt_and_zip(
-            translated
-        )
-    )
-
-    return srt_file
 
 
 # =========================================================
 # BUILD VIDEO FILTER
 # =========================================================
 
-def build_video_filter(
+def build_exact_video_filter(
     ratio,
     zoom,
     brightness,
@@ -1238,61 +1619,105 @@ def build_video_filter(
     blur_w,
     blur_h,
     blur_strength,
+    logo_index,
     logo_enabled,
     logo_x,
     logo_y,
-    logo_scale
+    logo_scale,
+    subtitle_ass,
+    width,
+    height
 ):
 
     filters = []
 
-    # -----------------------------------------
-    # SCALE / CROP
-    # -----------------------------------------
+    # =====================================================
+    # EXACT RATIO
+    # =====================================================
 
-    rw, rh = ratio_values(
-        ratio
-    )
-
+    # Scale so the frame completely covers target.
     filters.append(
-        f"scale=iw*{zoom}:ih*{zoom}:"
+        f"scale="
+        f"{width}:"
+        f"{height}:"
         "force_original_aspect_ratio=increase"
     )
 
+    # Exact target crop.
     filters.append(
         f"crop="
-        f"min(iw,iw):min(ih,ih)"
+        f"{width}:"
+        f"{height}"
     )
 
     filters.append(
-        f"scale={rw*720//rh if rw < rh else 720}:"
-        f"{720 if rw < rh else rh*720//rw}"
+        "setsar=1"
     )
 
-    # -----------------------------------------
+    # =====================================================
+    # ZOOM
+    # =====================================================
+
+    z = max(
+        1.0,
+        safe_float(
+            zoom,
+            1
+        )
+    )
+
+    if z > 1.001:
+
+        zoom_w = int(
+            width * z
+        )
+
+        zoom_h = int(
+            height * z
+        )
+
+        filters.append(
+            f"scale="
+            f"{zoom_w}:"
+            f"{zoom_h}"
+        )
+
+        filters.append(
+            f"crop="
+            f"{width}:"
+            f"{height}"
+        )
+
+    # =====================================================
     # FLIP
-    # -----------------------------------------
+    # =====================================================
 
     if flip:
+
         filters.append(
             "hflip"
         )
 
-    # -----------------------------------------
+    # =====================================================
     # BRIGHTNESS
-    # -----------------------------------------
+    # =====================================================
 
-    if abs(brightness) > 0.01:
+    b = safe_float(
+        brightness,
+        0
+    )
+
+    if abs(b) > 0.001:
 
         filters.append(
-            f"eq=brightness={brightness:.3f}"
+            f"eq=brightness={b:.3f}"
         )
 
     return filters
 
 
 # =========================================================
-# FINAL VIDEO RENDER
+# FINAL RENDER
 # =========================================================
 
 def render_video(
@@ -1328,7 +1753,9 @@ def render_video(
     subtitle_outline,
     subtitle_x,
     subtitle_y,
-    subtitle_font
+    subtitle_font,
+    voice_file=None,
+    preview_seconds=None
 ):
 
     source = resolve_video(
@@ -1337,15 +1764,19 @@ def render_video(
     )
 
     if not source:
+
         return (
             None,
             "⚠️ Video မရှိပါ။"
         )
 
-    if not os.path.exists(source):
+    if not os.path.exists(
+        source
+    ):
+
         return (
             None,
-            "⚠️ Video File မတွေ့ပါ။"
+            "⚠️ Video file မတွေ့ပါ။"
         )
 
     valid, duration_message = (
@@ -1355,6 +1786,7 @@ def render_video(
     )
 
     if not valid:
+
         return (
             None,
             duration_message
@@ -1366,7 +1798,10 @@ def render_video(
 
     start = max(
         0,
-        safe_float(trim_start)
+        safe_float(
+            trim_start,
+            0
+        )
     )
 
     end = safe_float(
@@ -1375,530 +1810,712 @@ def render_video(
     )
 
     if end <= 0:
-        end = duration or 999999
+
+        end = (
+            duration
+            or
+            999999
+        )
 
     if duration:
+
         end = min(
             end,
             duration
         )
 
-    if end <= start:
+    if (
+        end
+        <=
+        start
+    ):
+
         return (
             None,
-            "⚠️ Trim Start/End မမှန်ပါ။"
+            "⚠️ Trim Start / End မမှန်ပါ။"
         )
 
-    output = unique_file(
-        "final_video",
-        ".mp4"
-    )
+    # =====================================================
+    # EXACT OUTPUT SIZE
+    # =====================================================
 
-    try:
-
-        # =====================================
-        # Prepare subtitle
-        # =====================================
-
-        subtitle_file = None
-
-        if (
-            subtitle_enabled
-            and recap_script
-        ):
-
-            subtitle_file = (
-                make_subtitle_file(
-                    recap_script,
-                    subtitle_language
-                )
-            )
-
-        # =====================================
-        # Build filter graph
-        # =====================================
-
-        rw, rh = ratio_values(
+    width, height = (
+        ratio_size(
             ratio
         )
+    )
 
-        target_h = 720
-        target_w = int(
-            target_h * rw / rh
+    # =====================================================
+    # PREPARE VOICE
+    # =====================================================
+
+    generated_voice = voice_file
+
+    if (
+        not generated_voice
+        and
+        recap_script
+        and
+        recap_script.strip()
+    ):
+
+        try:
+
+            generated_voice = asyncio.run(
+                make_tts(
+                    recap_script,
+                    "Thiha (အမျိုးသားအသံ) - Natural",
+                    5
+                )
+            )
+
+        except Exception as e:
+
+            print(
+                "Auto TTS Error:",
+                e
+            )
+
+    # =====================================================
+    # SUBTITLE
+    # =====================================================
+
+    subtitle_ass = None
+
+    if (
+        subtitle_enabled
+        and
+        recap_script
+        and
+        recap_script.strip()
+    ):
+
+        subtitle_text = (
+            translate_script(
+                recap_script,
+                subtitle_language
+            )
         )
 
-        if target_w % 2:
-            target_w += 1
+        audio_duration = None
 
-        filter_parts = []
+        if generated_voice:
 
-        base_filters = [
-            f"scale="
-            f"{target_w}:"
-            f"{target_h}:"
-            "force_original_aspect_ratio=increase",
-
-            f"crop={target_w}:{target_h}",
-
-            f"setsar=1",
-        ]
-
-        if zoom > 1:
-            base_filters.append(
-                f"scale="
-                f"{int(target_w * zoom)}:"
-                f"{int(target_h * zoom)}"
+            audio_duration = (
+                get_audio_duration(
+                    generated_voice
+                )
             )
 
-            base_filters.append(
-                f"crop={target_w}:{target_h}"
+        srt_content = (
+            generate_srt_content(
+                subtitle_text,
+                audio_duration
+            )
+        )
+
+        if srt_content:
+
+            srt_file = unique_file(
+                "render_subtitle",
+                ".srt"
             )
 
-        if flip:
-            base_filters.append(
-                "hflip"
+            Path(
+                srt_file
+            ).write_text(
+                srt_content,
+                encoding="utf-8-sig"
             )
 
-        if abs(brightness) > 0.001:
-            base_filters.append(
-                f"eq=brightness={brightness:.3f}"
+            subtitle_ass = srt_to_ass(
+                srt_file,
+                subtitle_font,
+                subtitle_size,
+                subtitle_text_color,
+                subtitle_outline_color,
+                subtitle_outline,
+                subtitle_x,
+                subtitle_y,
+                width,
+                height
             )
+
+    # =====================================================
+    # INPUT INDEX
+    # =====================================================
+
+    # 0 = source
+    next_index = 1
+
+    logo_index = None
+    music_index = None
+    voice_index = None
+
+    has_logo = (
+        logo_enabled
+        and
+        logo_file
+        and
+        os.path.exists(
+            logo_file
+        )
+    )
+
+    has_music = (
+        bg_music
+        and
+        os.path.exists(
+            bg_music
+        )
+    )
+
+    has_voice = (
+        generated_voice
+        and
+        os.path.exists(
+            generated_voice
+        )
+    )
+
+    if has_logo:
+
+        logo_index = next_index
+
+        next_index += 1
+
+    if has_music:
+
+        music_index = next_index
+
+        next_index += 1
+
+    if has_voice:
+
+        voice_index = next_index
+
+        next_index += 1
+
+    # =====================================================
+    # VIDEO FILTER
+    # =====================================================
+
+    filter_parts = []
+
+    base_filters = (
+        build_exact_video_filter(
+            ratio,
+            zoom,
+            brightness,
+            flip,
+            blur_enabled,
+            blur_x,
+            blur_y,
+            blur_w,
+            blur_h,
+            blur_strength,
+            logo_index,
+            logo_enabled,
+            logo_x,
+            logo_y,
+            logo_scale,
+            subtitle_ass,
+            width,
+            height
+        )
+    )
+
+    filter_parts.append(
+        "[0:v]"
+        +
+        ",".join(
+            base_filters
+        )
+        +
+        "[base]"
+    )
+
+    current_video = "base"
+
+    # =====================================================
+    # BLUR REGION
+    # =====================================================
+
+    if blur_enabled:
+
+        x = int(
+            width
+            *
+            safe_float(
+                blur_x,
+                10
+            )
+            /
+            100
+        )
+
+        y = int(
+            height
+            *
+            safe_float(
+                blur_y,
+                10
+            )
+            /
+            100
+        )
+
+        w = int(
+            width
+            *
+            safe_float(
+                blur_w,
+                30
+            )
+            /
+            100
+        )
+
+        h = int(
+            height
+            *
+            safe_float(
+                blur_h,
+                20
+            )
+            /
+            100
+        )
+
+        x = max(
+            0,
+            min(
+                x,
+                width - 10
+            )
+        )
+
+        y = max(
+            0,
+            min(
+                y,
+                height - 10
+            )
+        )
+
+        w = max(
+            10,
+            min(
+                w,
+                width - x
+            )
+        )
+
+        h = max(
+            10,
+            min(
+                h,
+                height - y
+            )
+        )
+
+        strength = max(
+            1,
+            int(
+                safe_float(
+                    blur_strength,
+                    10
+                )
+            )
+        )
 
         filter_parts.append(
-            "[0:v]"
-            +
-            ",".join(base_filters)
-            +
-            "[base]"
+            f"[{current_video}]"
+            f"split=2[normal][blurbase]"
         )
 
-        current_video = "base"
+        filter_parts.append(
+            f"[blurbase]"
+            f"crop={w}:{h}:{x}:{y},"
+            f"boxblur="
+            f"luma_radius={strength}:"
+            f"luma_power=1[blurpatch]"
+        )
 
-        # =====================================
-        # Blur
-        # =====================================
+        filter_parts.append(
+            f"[normal][blurpatch]"
+            f"overlay={x}:{y}"
+            "[blurout]"
+        )
 
-        if blur_enabled:
+        current_video = "blurout"
 
-            bx = int(
-                target_w *
-                safe_float(blur_x) /
-                100
-            )
+    # =====================================================
+    # LOGO
+    # =====================================================
 
-            by = int(
-                target_h *
-                safe_float(blur_y) /
-                100
-            )
+    if has_logo:
 
-            bw = int(
-                target_w *
-                safe_float(blur_w) /
-                100
-            )
-
-            bh = int(
-                target_h *
-                safe_float(blur_h) /
-                100
-            )
-
-            bw = max(
-                10,
-                min(
-                    bw,
-                    target_w
-                )
-            )
-
-            bh = max(
-                10,
-                min(
-                    bh,
-                    target_h
-                )
-            )
-
-            blur_strength = max(
-                1,
-                int(
-                    safe_float(
-                        blur_strength,
-                        10
-                    )
-                )
-            )
-
-            filter_parts.append(
-                f"[{current_video}]"
-                f"split=2[blurbase][blursource]"
-            )
-
-            filter_parts.append(
-                "[blurbase]"
-                f"boxblur={blur_strength}:"
-                f"{blur_strength}[blurred]"
-            )
-
-            filter_parts.append(
-                f"[blursource]"
-                f"crop={bw}:{bh}:{bx}:{by},"
-                f"boxblur={blur_strength}:"
-                f"{blur_strength},"
-                f"pad={target_w}:{target_h}:"
-                f"{bx}:{by}:color=black@0"
-                f"[blurpatch]"
-            )
-
-            filter_parts.append(
-                "[blurbase][blurpatch]"
-                "overlay=0:0[blurout]"
-            )
-
-            current_video = "blurout"
-
-        # =====================================
-        # Logo
-        # =====================================
-
-        if (
-            logo_enabled
-            and logo_file
-            and os.path.exists(logo_file)
-        ):
-
-            logo_size = max(
-                5,
-                min(
-                    100,
-                    safe_float(
-                        logo_scale,
-                        20
-                    )
-                )
-            )
-
-            lx = int(
-                target_w *
-                safe_float(logo_x) /
-                100
-            )
-
-            ly = int(
-                target_h *
-                safe_float(logo_y) /
-                100
-            )
-
-            filter_parts.append(
-                f"[1:v]"
-                f"scale="
-                f"-1:{int(target_h * logo_size / 100)}"
-                "[logo]"
-            )
-
-            filter_parts.append(
-                f"[{current_video}][logo]"
-                f"overlay={lx}:{ly}"
-                "[logoout]"
-            )
-
-            current_video = "logoout"
-
-        # =====================================
-        # Subtitle
-        # =====================================
-
-        if (
-            subtitle_enabled
-            and subtitle_file
-            and os.path.exists(
-                subtitle_file
-            )
-        ):
-
-            font_size = max(
-                12,
-                int(
-                    safe_float(
-                        subtitle_size,
-                        32
-                    )
-                )
-            )
-
-            tx = int(
-                target_w *
+        logo_h = max(
+            20,
+            int(
+                height
+                *
                 safe_float(
-                    subtitle_x,
-                    50
-                ) /
+                    logo_scale,
+                    20
+                )
+                /
                 100
             )
+        )
 
-            ty = int(
-                target_h *
+        # Position percentage
+        lx = int(
+            (
+                width
+                -
+                logo_h
+            )
+            *
+            safe_float(
+                logo_x,
+                85
+            )
+            /
+            100
+        )
+
+        ly = int(
+            (
+                height
+                -
+                logo_h
+            )
+            *
+            safe_float(
+                logo_y,
+                10
+            )
+            /
+            100
+        )
+
+        lx = max(
+            0,
+            lx
+        )
+
+        ly = max(
+            0,
+            ly
+        )
+
+        filter_parts.append(
+            f"[{logo_index}:v]"
+            f"format=rgba,"
+            f"scale=-1:{logo_h}"
+            "[logo]"
+        )
+
+        filter_parts.append(
+            f"[{current_video}]"
+            "[logo]"
+            f"overlay={lx}:{ly}"
+            "[logoout]"
+        )
+
+        current_video = "logoout"
+
+    # =====================================================
+    # SUBTITLE
+    # =====================================================
+
+    if subtitle_ass:
+
+        escaped_ass = (
+            escape_filter_path(
+                subtitle_ass
+            )
+        )
+
+        filter_parts.append(
+            f"[{current_video}]"
+            f"ass='{escaped_ass}'"
+            "[subout]"
+        )
+
+        current_video = "subout"
+
+    # =====================================================
+    # AUDIO FILTER
+    # =====================================================
+
+    audio_labels = []
+
+    # ORIGINAL AUDIO
+    if (
+        original_audio
+        and
+        has_audio_stream(
+            source
+        )
+    ):
+
+        volume = max(
+            0,
+            min(
+                200,
                 safe_float(
-                    subtitle_y,
-                    85
-                ) /
-                100
-            )
-
-            text_color = COLOR_MAP.get(
-                subtitle_text_color,
-                "white"
-            )
-
-            outline_color = COLOR_MAP.get(
-                subtitle_outline_color,
-                "black"
-            )
-
-            # ffmpeg subtitles filter
-            subtitle_filter = (
-                f"subtitles="
-                f"'{subtitle_file}':"
-                f"force_style="
-                f"'FontName={subtitle_font},"
-                f"FontSize={font_size},"
-                f"PrimaryColour=&H00FFFFFF,"
-                f"OutlineColour=&H00000000,"
-                f"Outline={int(subtitle_outline)},"
-                f"Alignment=2,"
-                f"MarginV={max(5, target_h-ty)}'"
-            )
-
-            filter_parts.append(
-                f"[{current_video}]"
-                f"{subtitle_filter}"
-                "[subout]"
-            )
-
-            current_video = "subout"
-
-        # =====================================
-        # Audio
-        # =====================================
-
-        audio_parts = []
-
-        input_count = 1
-
-        # Logo is input 1
-        has_logo = (
-            logo_enabled
-            and logo_file
-            and os.path.exists(logo_file)
-        )
-
-        if has_logo:
-            input_count = 2
-
-        has_music = (
-            bg_music
-            and os.path.exists(bg_music)
-        )
-
-        music_index = None
-
-        if has_music:
-            music_index = input_count
-            input_count += 1
-
-        has_voice = False
-
-        # =====================================
-        # We create voice from script
-        # =====================================
-
-        voice_file = None
-
-        if recap_script:
-
-            try:
-
-                voice_file, _, _, _ = (
-                    tts_interface(
-                        recap_script,
-                        "Thiha (အမျိုးသားအသံ) - Natural",
-                        5
-                    )
+                    original_volume,
+                    30
                 )
-
-                if voice_file:
-                    has_voice = True
-
-            except Exception as e:
-
-                print(
-                    "Voice generation error:",
-                    e
-                )
-
-        voice_index = None
-
-        if has_voice:
-
-            voice_index = input_count
-            input_count += 1
-
-        # =====================================
-        # Original audio
-        # =====================================
-
-        audio_labels = []
-
-        if original_audio:
-
-            audio_parts.append(
-                f"[0:a]"
-                f"volume="
-                f"{max(0, original_volume)/100:.3f}"
-                "[orig]"
             )
+        ) / 100
 
-            audio_labels.append(
-                "[orig]"
-            )
-
-        # =====================================
-        # Music
-        # =====================================
-
-        if has_music:
-
-            filter_parts.append(
-                f"[{music_index}:a]"
-                f"volume="
-                f"{max(0, music_volume)/100:.3f}"
-                "[music]"
-            )
-
-            audio_labels.append(
-                "[music]"
-            )
-
-        # =====================================
-        # Voice
-        # =====================================
-
-        if has_voice:
-
-            filter_parts.append(
-                f"[{voice_index}:a]"
-                f"volume=1.0"
-                "[voice]"
-            )
-
-            audio_labels.append(
-                "[voice]"
-            )
-
-        if len(audio_labels) == 1:
-
-            audio_map = audio_labels[0]
-
-        elif len(audio_labels) > 1:
-
-            filter_parts.append(
-                "".join(audio_labels)
-                +
-                f"amix=inputs="
-                f"{len(audio_labels)}:"
-                "duration=longest:"
-                "dropout_transition=2"
-                "[mixed]"
-            )
-
-            audio_map = "[mixed]"
-
-        else:
-
-            audio_map = "0:a?"
-
-        # =====================================
-        # Command
-        # =====================================
-
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-ss",
-            str(start),
-            "-i",
-            source,
-        ]
-
-        if has_logo:
-
-            cmd += [
-                "-i",
-                logo_file
-            ]
-
-        if has_music:
-
-            cmd += [
-                "-stream_loop",
-                "-1",
-                "-i",
-                bg_music
-            ]
-
-        if has_voice:
-
-            cmd += [
-                "-i",
-                voice_file
-            ]
-
-        filter_complex = ";".join(
-            filter_parts
+        filter_parts.append(
+            f"[0:a]"
+            f"volume={volume:.3f}"
+            "[orig]"
         )
+
+        audio_labels.append(
+            "[orig]"
+        )
+
+    # BACKGROUND MUSIC
+    if has_music:
+
+        volume = max(
+            0,
+            min(
+                200,
+                safe_float(
+                    music_volume,
+                    15
+                )
+            )
+        ) / 100
+
+        filter_parts.append(
+            f"[{music_index}:a]"
+            f"volume={volume:.3f},"
+            "aresample=async=1"
+            "[music]"
+        )
+
+        audio_labels.append(
+            "[music]"
+        )
+
+    # BURMESE VOICE
+    if has_voice:
+
+        filter_parts.append(
+            f"[{voice_index}:a]"
+            "volume=1,"
+            "aresample=async=1"
+            "[voice]"
+        )
+
+        audio_labels.append(
+            "[voice]"
+        )
+
+    # =====================================================
+    # MIX AUDIO
+    # =====================================================
+
+    if len(
+        audio_labels
+    ) == 0:
+
+        audio_map = None
+
+    elif len(
+        audio_labels
+    ) == 1:
+
+        audio_map = audio_labels[0]
+
+    else:
+
+        filter_parts.append(
+            "".join(
+                audio_labels
+            )
+            +
+            f"amix="
+            f"inputs={len(audio_labels)}:"
+            "duration=longest:"
+            "dropout_transition=2:"
+            "normalize=0"
+            "[finalaudio]"
+        )
+
+        audio_map = (
+            "[finalaudio]"
+        )
+
+    # =====================================================
+    # COMMAND
+    # =====================================================
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+
+        "-ss",
+        str(start),
+
+        "-i",
+        source
+    ]
+
+    if has_logo:
 
         cmd += [
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            f"[{current_video}]",
-            "-map",
-            audio_map,
-            "-t",
-            str(max(1, end-start)),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-movflags",
-            "+faststart",
-            output
+            "-i",
+            logo_file
         ]
+
+    if has_music:
+
+        cmd += [
+            "-stream_loop",
+            "-1",
+            "-i",
+            bg_music
+        ]
+
+    if has_voice:
+
+        cmd += [
+            "-i",
+            generated_voice
+        ]
+
+    filter_complex = ";".join(
+        filter_parts
+    )
+
+    cmd += [
+        "-filter_complex",
+        filter_complex,
+
+        "-map",
+        f"[{current_video}]"
+    ]
+
+    if audio_map:
+
+        cmd += [
+            "-map",
+            audio_map
+        ]
+
+    else:
+
+        cmd += [
+            "-an"
+        ]
+
+    # Preview = first 15 seconds
+    if preview_seconds:
+
+        render_duration = min(
+            float(preview_seconds),
+            max(
+                1,
+                end - start
+            )
+        )
+
+    else:
+
+        render_duration = max(
+            1,
+            end - start
+        )
+
+    cmd += [
+        "-t",
+        str(render_duration),
+
+        "-c:v",
+        "libx264",
+
+        "-preset",
+        "veryfast",
+
+        "-crf",
+        "23",
+
+        "-pix_fmt",
+        "yuv420p",
+
+        "-c:a",
+        "aac",
+
+        "-b:a",
+        "192k",
+
+        "-movflags",
+        "+faststart",
+
+        unique_file(
+            "preview"
+            if preview_seconds
+            else "final",
+            ".mp4"
+        )
+    ]
+
+    output = cmd[-1]
+
+    try:
 
         run_cmd(
             cmd,
             timeout=1800
         )
 
+        if not os.path.exists(
+            output
+        ):
+
+            raise RuntimeError(
+                "FFmpeg output မတွေ့ပါ။"
+            )
+
+        if preview_seconds:
+
+            status = (
+                f"## 👀 Preview Ready\n\n"
+                f"📐 **{ratio}**\n\n"
+                f"📏 **{width} × {height}**\n\n"
+                "ဒီ Preview က Final Video မှာ "
+                "သုံးမယ့် ratio နဲ့ filter အတိုင်း "
+                "render လုပ်ထားတာပါ။"
+            )
+
+        else:
+
+            status = (
+                "## ✅ FINAL VIDEO READY\n\n"
+                f"📐 Ratio: **{ratio}**\n\n"
+                f"📏 Resolution: **{width} × {height}**\n\n"
+                "🎙️ Burmese Voice\n\n"
+                "🎵 Audio Mix\n\n"
+                "📝 Subtitle\n\n"
+                "🏷️ Logo\n\n"
+                "🌫️ Blur\n\n"
+                "🎬 Video Effects"
+            )
+
         return (
             output,
-            (
-                "## ✅ Video Render ပြီးပါပြီ\n\n"
-                f"{duration_message}\n\n"
-                f"📐 Ratio: {ratio}\n\n"
-                "🎙️ Voice + 🎵 Music + "
-                "📝 Subtitle + 🎬 Effects "
-                "ထည့်သွင်းပြီးပါပြီ။"
-            )
+            status
         )
 
     except Exception as e:
@@ -1910,21 +2527,21 @@ def render_video(
 
         return (
             None,
-            (
-                "❌ Render Error\n\n"
-                f"{str(e)}"
-            )
+            f"❌ Render Error\n\n{e}"
         )
 
 
 # =========================================================
-# PREVIEW RENDER
+# PREVIEW
 # =========================================================
 
 def preview_render(
     video_file,
     video_url,
+    edit_script,
     ratio,
+    trim_start,
+    trim_end,
     zoom,
     brightness,
     flip,
@@ -1952,18 +2569,13 @@ def preview_render(
     subtitle_x,
     subtitle_y,
     subtitle_font,
-    trim_start,
-    trim_end
+    voice_file
 ):
 
-    # Preview intentionally uses
-    # a blank recap script.
-    # This allows fast visual preview.
-
-    result, status = render_video(
+    return render_video(
         video_file,
         video_url,
-        "",
+        edit_script,
         ratio,
         trim_start,
         trim_end,
@@ -1985,7 +2597,7 @@ def preview_render(
         blur_w,
         blur_h,
         blur_strength,
-        False,
+        subtitle_enabled,
         subtitle_language,
         subtitle_size,
         subtitle_text_color,
@@ -1993,32 +2605,37 @@ def preview_render(
         subtitle_outline,
         subtitle_x,
         subtitle_y,
-        subtitle_font
-    )
-
-    return (
-        result,
-        status
+        subtitle_font,
+        voice_file=voice_file,
+        preview_seconds=15
     )
 
 
 # =========================================================
-# AUTO SEND SCRIPT TO TTS
+# UI CSS
 # =========================================================
 
-def send_script_to_editor(
-    script
-):
+CSS = """
 
-    return script or ""
+#ratio_preview {
+    width:100%;
+}
+
+#ratio_preview video {
+    background:#000 !important;
+    object-fit:contain !important;
+}
+
+"""
 
 
 # =========================================================
-# FULL UI
+# UI
 # =========================================================
 
 with gr.Blocks(
     title=APP_TITLE,
+    css=CSS,
     theme=gr.themes.Soft()
 ) as demo:
 
@@ -2026,34 +2643,22 @@ with gr.Blocks(
         """
 # 🎬 AI Movie Recap Studio Pro
 
-### Video → AI Recap → Burmese Voice → Video Edit → Final MP4
-
-**Narrator + Character Dialogue + Visual Storytelling**
+### Video → Gemini Recap → Burmese Voice → Subtitle → Edit → Final MP4
 """
     )
 
     # =====================================================
-    # API TAB
+    # API
     # =====================================================
 
     with gr.Tab(
         "🔑 API Key"
     ):
 
-        gr.Markdown(
-            """
-### Gemini API Key
-
-Render Environment Variables ထဲမှာ
-`GEMINI_API_KEY` ထည့်ထားရင် အလိုအလျောက်သုံးနိုင်ပါတယ်။
-မထည့်ထားရင် အောက်မှာထည့်ပြီး Save လုပ်နိုင်ပါတယ်။
-"""
-        )
-
         api_key_input = gr.Textbox(
             label="Gemini API Key",
             type="password",
-            placeholder="AIzaSy..."
+            placeholder="AIza..."
         )
 
         save_key_btn = gr.Button(
@@ -2061,7 +2666,7 @@ Render Environment Variables ထဲမှာ
             variant="primary"
         )
 
-        key_status = gr.Markdown("")
+        key_status = gr.Markdown()
 
     # =====================================================
     # TAB 1
@@ -2076,19 +2681,19 @@ Render Environment Variables ထဲမှာ
             with gr.Column():
 
                 video_file = gr.Video(
-                    label="📹 Video File"
+                    label="📹 Upload Video",
+                    type="filepath"
                 )
 
                 video_url = gr.Textbox(
                     label="🔗 Video URL",
                     placeholder=(
-                        "YouTube / Facebook / TikTok / "
-                        "RedNote / Other URL"
+                        "YouTube / TikTok / Facebook / RedNote"
                     )
                 )
 
                 load_link_btn = gr.Button(
-                    "🔍 Link Video ရယူမည်"
+                    "🔍 Load URL Video"
                 )
 
                 ratio_picker = gr.Radio(
@@ -2099,18 +2704,20 @@ Render Environment Variables ထဲမှာ
                         "16:9"
                     ],
                     value="9:16",
-                    label="📐 Aspect Ratio"
+                    label="📐 Target Ratio"
                 )
 
                 gen_script_btn = gr.Button(
-                    "🚀 Movie Recap Script ထုတ်မည်",
+                    "🚀 Generate Burmese Recap Script",
                     variant="primary"
                 )
 
             with gr.Column():
 
-                ratio_css = gr.HTML(
-                    get_ratio_css("9:16")
+                ratio_info = gr.Markdown(
+                    get_ratio_css(
+                        "9:16"
+                    )
                 )
 
                 tab1_preview = gr.Video(
@@ -2118,11 +2725,11 @@ Render Environment Variables ထဲမှာ
                 )
 
                 script_status = gr.Markdown(
-                    "Video တင်ပြီး Script ထုတ်နိုင်ပါပြီ။"
+                    "Video ထည့်ပြီး Script Generate လုပ်နိုင်ပါပြီ။"
                 )
 
                 script_display = gr.Textbox(
-                    label="🎬 Generated Burmese Recap Script",
+                    label="🎬 Burmese Recap Script",
                     lines=18
                 )
 
@@ -2141,7 +2748,7 @@ Render Environment Variables ထဲမှာ
     # =====================================================
 
     with gr.Tab(
-        "2️⃣ Text-to-Speech"
+        "2️⃣ Burmese Text-to-Speech"
     ):
 
         with gr.Row():
@@ -2149,12 +2756,8 @@ Render Environment Variables ထဲမှာ
             with gr.Column():
 
                 input_text = gr.Textbox(
-                    label="🎙️ Burmese Recap Script",
-                    lines=18,
-                    placeholder=(
-                        "Tab 1 က Script "
-                        "ဒီနေရာကို အလိုအလျောက်ရောက်လာပါမယ်။"
-                    )
+                    label="🎙️ Burmese Script",
+                    lines=18
                 )
 
                 voice_dropdown = gr.Dropdown(
@@ -2165,7 +2768,7 @@ Render Environment Variables ထဲမှာ
                         "Thiha "
                         "(အမျိုးသားအသံ) - Natural"
                     ),
-                    label="🎤 Burmese Voice"
+                    label="🎤 Voice"
                 )
 
                 speed_slider = gr.Slider(
@@ -2173,24 +2776,24 @@ Render Environment Variables ထဲမှာ
                     maximum=50,
                     value=5,
                     step=1,
-                    label="⚡ Voice Speed (%)"
+                    label="⚡ Voice Speed %"
                 )
 
                 gen_voice_btn = gr.Button(
-                    "⚡ Voice ထုတ်မည်",
+                    "🔊 Generate Voice",
                     variant="primary"
                 )
 
             with gr.Column():
 
                 audio_output = gr.Audio(
+                    label="🎧 Voice Preview",
                     type="filepath",
-                    autoplay=True,
-                    label="🔊 Voice Preview"
+                    autoplay=True
                 )
 
                 mp3_download = gr.File(
-                    label="🎵 MP3 Download"
+                    label="🎵 Download MP3"
                 )
 
                 with gr.Row():
@@ -2208,67 +2811,109 @@ Render Environment Variables ထဲမှာ
     # =====================================================
 
     with gr.Tab(
-        "3️⃣ Video Edit"
+        "3️⃣ Video Edit - All In One"
     ):
-
-        gr.Markdown(
-            """
-# 🎬 Video Edit
-
-Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထည့်ပါ။
-အောက်က Setting တွေပြောင်းပြီး **Preview Render**
-လုပ်ကြည့်ပြီးမှ Final Video ဖန်တီးနိုင်ပါတယ်။
-"""
-        )
-
-        # -------------------------------------------------
-        # INPUT
-        # -------------------------------------------------
 
         with gr.Row():
 
             with gr.Column():
 
                 edit_video_file = gr.Video(
-                    label="📹 Video File"
+                    label="📹 Edit Video",
+                    type="filepath"
                 )
 
                 edit_video_url = gr.Textbox(
-                    label="🔗 YouTube / Facebook / TikTok / RedNote / Other URL"
+                    label="🔗 Video URL"
                 )
 
                 edit_load_btn = gr.Button(
-                    "🔍 Link Video ရယူမည်"
-                )
-
-                edit_ratio = gr.Radio(
-                    choices=[
-                        "9:16",
-                        "3:4",
-                        "1:1",
-                        "16:9"
-                    ],
-                    value="9:16",
-                    label="📐 Video Ratio"
+                    "🔍 Load URL"
                 )
 
             with gr.Column():
 
                 edit_preview = gr.Video(
-                    label="👀 Live Preview / Render Preview",
-                    elem_id="edit_preview_container"
+                    label="👀 Rendered Preview",
+                    elem_id="ratio_preview"
                 )
 
-                edit_status = gr.Markdown(
-                    "Video Edit Preview အဆင်သင့်ပါပြီ။"
-                )
+                edit_status = gr.Markdown()
 
-        # -------------------------------------------------
-        # TRIM
-        # -------------------------------------------------
+        # =================================================
+        # RATIO
+        # =================================================
+
+        edit_ratio = gr.Radio(
+            choices=[
+                "9:16",
+                "3:4",
+                "1:1",
+                "16:9"
+            ],
+            value="9:16",
+            label="📐 FINAL VIDEO RATIO"
+        )
+
+        edit_ratio_info = gr.Markdown(
+            get_ratio_css(
+                "9:16"
+            )
+        )
+
+        # =================================================
+        # SCRIPT / VOICE
+        # =================================================
 
         with gr.Accordion(
-            "✂️ Trim / Cut",
+            "🎙️ Burmese Voice",
+            open=True
+        ):
+
+            edit_script = gr.Textbox(
+                label="Recap Script",
+                lines=12
+            )
+
+            edit_voice = gr.Dropdown(
+                choices=list(
+                    VOICES.keys()
+                ),
+                value=(
+                    "Thiha "
+                    "(အမျိုးသားအသံ) - Natural"
+                ),
+                label="Voice"
+            )
+
+            edit_voice_speed = gr.Slider(
+                minimum=-30,
+                maximum=50,
+                value=5,
+                step=1,
+                label="Voice Speed"
+            )
+
+            generate_edit_voice_btn = gr.Button(
+                "🎙️ Generate Voice"
+            )
+
+            edit_voice_preview = gr.Audio(
+                label="🎧 Voice Preview",
+                type="filepath",
+                autoplay=True
+            )
+
+            edit_voice_download = gr.File(
+                label="🎵 MP3 Download"
+            )
+
+        # =================================================
+        # TRIM
+        # =================================================
+
+        with gr.Accordion(
+            "✂️ Trim",
             open=True
         ):
 
@@ -2276,19 +2921,17 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
 
                 trim_start = gr.Number(
                     value=0,
-                    label="Start Time (seconds)"
+                    label="Start Seconds"
                 )
 
                 trim_end = gr.Number(
                     value=0,
-                    label=(
-                        "End Time (0 = Video အဆုံး)"
-                    )
+                    label="End Seconds (0 = End)"
                 )
 
-        # -------------------------------------------------
-        # VIDEO EFFECTS
-        # -------------------------------------------------
+        # =================================================
+        # VIDEO
+        # =================================================
 
         with gr.Accordion(
             "🎬 Video Effects",
@@ -2314,13 +2957,13 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
                 )
 
                 flip_checkbox = gr.Checkbox(
-                    label="↔️ Flip Left / Right",
+                    label="↔️ Flip",
                     value=False
                 )
 
-        # -------------------------------------------------
+        # =================================================
         # AUDIO
-        # -------------------------------------------------
+        # =================================================
 
         with gr.Accordion(
             "🔊 Audio",
@@ -2330,7 +2973,7 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
             with gr.Row():
 
                 original_audio = gr.Checkbox(
-                    label="🎙️ Original Audio ON/OFF",
+                    label="Original Audio ON",
                     value=False
                 )
 
@@ -2339,12 +2982,12 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
                     maximum=200,
                     value=30,
                     step=1,
-                    label="Original Audio Volume %"
+                    label="Original Volume %"
                 )
 
             bg_music = gr.Audio(
-                type="filepath",
-                label="🎵 Background Music"
+                label="🎵 Background Music",
+                type="filepath"
             )
 
             music_volume = gr.Slider(
@@ -2352,62 +2995,60 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
                 maximum=200,
                 value=15,
                 step=1,
-                label="Background Music Volume %"
+                label="Music Volume %"
             )
 
-        # -------------------------------------------------
+        # =================================================
         # LOGO
-        # -------------------------------------------------
+        # =================================================
 
         with gr.Accordion(
             "🏷️ Logo",
             open=False
         ):
 
-            with gr.Row():
+            logo_file = gr.Image(
+                label="Logo",
+                type="filepath"
+            )
 
-                logo_file = gr.Image(
-                    type="filepath",
-                    label="Logo PNG/JPG"
-                )
-
-                logo_enabled = gr.Checkbox(
-                    label="Logo ON",
-                    value=False
-                )
+            logo_enabled = gr.Checkbox(
+                label="Logo ON",
+                value=False
+            )
 
             with gr.Row():
 
                 logo_x = gr.Slider(
-                    minimum=0,
-                    maximum=100,
+                    0,
+                    100,
                     value=85,
                     step=1,
-                    label="Logo Left / Right"
+                    label="Logo X %"
                 )
 
                 logo_y = gr.Slider(
-                    minimum=0,
-                    maximum=100,
+                    0,
+                    100,
                     value=10,
                     step=1,
-                    label="Logo Top / Bottom"
+                    label="Logo Y %"
                 )
 
                 logo_scale = gr.Slider(
-                    minimum=5,
-                    maximum=50,
+                    5,
+                    50,
                     value=20,
                     step=1,
                     label="Logo Size %"
                 )
 
-        # -------------------------------------------------
+        # =================================================
         # BLUR
-        # -------------------------------------------------
+        # =================================================
 
         with gr.Accordion(
-            "🌫️ Blur Area",
+            "🌫️ Blur",
             open=False
         ):
 
@@ -2419,50 +3060,50 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
             with gr.Row():
 
                 blur_x = gr.Slider(
-                    minimum=0,
-                    maximum=100,
+                    0,
+                    100,
                     value=10,
                     step=1,
-                    label="Blur X / Left"
+                    label="Blur X %"
                 )
 
                 blur_y = gr.Slider(
-                    minimum=0,
-                    maximum=100,
+                    0,
+                    100,
                     value=10,
                     step=1,
-                    label="Blur Y / Top"
+                    label="Blur Y %"
                 )
 
             with gr.Row():
 
                 blur_w = gr.Slider(
-                    minimum=1,
-                    maximum=100,
+                    1,
+                    100,
                     value=30,
                     step=1,
-                    label="Blur Width"
+                    label="Blur Width %"
                 )
 
                 blur_h = gr.Slider(
-                    minimum=1,
-                    maximum=100,
+                    1,
+                    100,
                     value=20,
                     step=1,
-                    label="Blur Height"
+                    label="Blur Height %"
                 )
 
                 blur_strength = gr.Slider(
-                    minimum=1,
-                    maximum=40,
+                    1,
+                    40,
                     value=10,
                     step=1,
                     label="Blur Strength"
                 )
 
-        # -------------------------------------------------
+        # =================================================
         # SUBTITLE
-        # -------------------------------------------------
+        # =================================================
 
         with gr.Accordion(
             "📝 Subtitle",
@@ -2483,14 +3124,13 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
                         "Thai"
                     ],
                     value="Myanmar",
-                    label="Subtitle Language"
+                    label="Language"
                 )
 
                 subtitle_font = gr.Dropdown(
                     choices=[
                         "Noto Sans Myanmar",
                         "Noto Sans",
-                        "Arial",
                         "DejaVu Sans",
                         "Liberation Sans"
                     ],
@@ -2501,19 +3141,19 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
             with gr.Row():
 
                 subtitle_size = gr.Slider(
-                    minimum=12,
-                    maximum=80,
+                    12,
+                    80,
                     value=32,
                     step=1,
                     label="Font Size"
                 )
 
                 subtitle_outline = gr.Slider(
-                    minimum=0,
-                    maximum=10,
+                    0,
+                    10,
                     value=3,
                     step=1,
-                    label="Outline Size"
+                    label="Outline"
                 )
 
             with gr.Row():
@@ -2537,107 +3177,48 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
             with gr.Row():
 
                 subtitle_x = gr.Slider(
-                    minimum=0,
-                    maximum=100,
+                    0,
+                    100,
                     value=50,
                     step=1,
-                    label="Subtitle Left / Right"
+                    label="Subtitle X %"
                 )
 
                 subtitle_y = gr.Slider(
-                    minimum=0,
-                    maximum=100,
+                    0,
+                    100,
                     value=85,
                     step=1,
-                    label="Subtitle Top / Bottom"
+                    label="Subtitle Y %"
                 )
 
-        # -------------------------------------------------
-        # SCRIPT
-        # -------------------------------------------------
+        # =================================================
+        # BUTTONS
+        # =================================================
 
-        with gr.Accordion(
-            "🎙️ Burmese Voice Script",
-            open=True
-        ):
+        with gr.Row():
 
-            edit_script = gr.Textbox(
-                label="Recap Script",
-                lines=12,
-                placeholder=(
-                    "Tab 1 မှ Script အလိုအလျောက် "
-                    "ဒီနေရာကို ရောက်လာပါမည်။"
-                )
+            preview_button = gr.Button(
+                "👀 PREVIEW 15 SEC",
+                variant="secondary",
+                size="lg"
             )
 
-            edit_voice = gr.Dropdown(
-                choices=list(
-                    VOICES.keys()
-                ),
-                value=(
-                    "Thiha "
-                    "(အမျိုးသားအသံ) - Natural"
-                ),
-                label="Video Voice"
+            final_button = gr.Button(
+                "🎬 CREATE FINAL VIDEO",
+                variant="primary",
+                size="lg"
             )
 
-            edit_voice_speed = gr.Slider(
-                minimum=-30,
-                maximum=50,
-                value=5,
-                step=1,
-                label="Voice Speed"
-            )
-
-            edit_voice_preview = gr.Audio(
-                type="filepath",
-                autoplay=True,
-                label="🎧 Voice Preview"
-            )
-
-            edit_voice_download = gr.File(
-                label="🎵 MP3 Download"
-            )
-
-            generate_edit_voice_btn = gr.Button(
-                "🎙️ Voice Generate",
-                variant="secondary"
-            )
-
-        # -------------------------------------------------
-        # PREVIEW BUTTON
-        # -------------------------------------------------
-
-        preview_button = gr.Button(
-            "👀 PREVIEW VIDEO",
-            variant="secondary",
-            size="lg"
-        )
-
-        # -------------------------------------------------
+        # =================================================
         # FINAL
-        # -------------------------------------------------
-
-        gr.Markdown(
-            """
-## 🚀 Final Video
-
-အပေါ်က Preview ကို စစ်ပြီး အဆင်ပြေမှ
-**CREATE FINAL VIDEO** ကိုနှိပ်ပါ။
-"""
-        )
-
-        final_button = gr.Button(
-            "🎬 CREATE FINAL VIDEO",
-            variant="primary",
-            size="lg"
-        )
+        # =================================================
 
         final_video = gr.Video(
-            label="🎥 Final Video Preview"
+            label="🎥 FINAL VIDEO"
         )
 
-        final_status = gr.Markdown("")
+        final_status = gr.Markdown()
 
         final_download = gr.File(
             label="⬇️ DOWNLOAD FINAL MP4"
@@ -2647,31 +3228,71 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
     # EVENTS
     # =====================================================
 
+    # -----------------------------------------------------
     # API
+    # -----------------------------------------------------
+
     save_key_btn.click(
         fn=save_api_key,
-        inputs=api_key_input,
-        outputs=key_status
+        inputs=[
+            api_key_input
+        ],
+        outputs=[
+            key_status
+        ]
     )
 
-    # TAB 1
+    # -----------------------------------------------------
+    # RATIO INFO
+    # -----------------------------------------------------
+
     ratio_picker.change(
         fn=get_ratio_css,
-        inputs=ratio_picker,
-        outputs=ratio_css
+        inputs=[
+            ratio_picker
+        ],
+        outputs=[
+            ratio_info
+        ]
     )
 
+    edit_ratio.change(
+        fn=get_ratio_css,
+        inputs=[
+            edit_ratio
+        ],
+        outputs=[
+            edit_ratio_info
+        ]
+    )
+
+    # -----------------------------------------------------
+    # TAB 1 VIDEO
+    # -----------------------------------------------------
+
     video_file.change(
-        fn=preview_uploaded_video,
-        inputs=video_file,
-        outputs=tab1_preview
+        fn=lambda x: x,
+        inputs=[
+            video_file
+        ],
+        outputs=[
+            tab1_preview
+        ]
     )
 
     load_link_btn.click(
         fn=load_link_preview,
-        inputs=video_url,
-        outputs=tab1_preview
+        inputs=[
+            video_url
+        ],
+        outputs=[
+            tab1_preview
+        ]
     )
+
+    # -----------------------------------------------------
+    # GENERATE SCRIPT
+    # -----------------------------------------------------
 
     gen_script_btn.click(
         fn=analyze_and_generate_script,
@@ -2684,25 +3305,48 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
             script_display,
             script_status,
             srt_download_tab1,
-            zip_download_tab1
+            zip_download_tab1,
+            edit_video_file
         ]
     )
 
-    # Script automatically to TTS
+    # Script → TTS
     gen_script_btn.click(
-        fn=send_script_to_editor,
-        inputs=script_display,
-        outputs=input_text
+        fn=lambda x: x,
+        inputs=[
+            script_display
+        ],
+        outputs=[
+            input_text
+        ]
     )
 
-    # Script automatically to Video Edit
+    # Script → Editor
     gen_script_btn.click(
-        fn=send_script_to_editor,
-        inputs=script_display,
-        outputs=edit_script
+        fn=lambda x: x,
+        inputs=[
+            script_display
+        ],
+        outputs=[
+            edit_script
+        ]
     )
 
-    # TTS
+    # Video → Editor
+    gen_script_btn.click(
+        fn=lambda x: x,
+        inputs=[
+            video_file
+        ],
+        outputs=[
+            edit_video_file
+        ]
+    )
+
+    # -----------------------------------------------------
+    # TAB 2 TTS
+    # -----------------------------------------------------
+
     gen_voice_btn.click(
         fn=tts_interface,
         inputs=[
@@ -2718,27 +3362,49 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
         ]
     )
 
-    # TAB 3 URL
+    # TTS → Editor voice
+    gen_voice_btn.click(
+        fn=lambda x: x,
+        inputs=[
+            audio_output
+        ],
+        outputs=[
+            edit_voice_preview
+        ]
+    )
+
+    # -----------------------------------------------------
+    # EDIT URL
+    # -----------------------------------------------------
+
     edit_load_btn.click(
         fn=load_link_preview,
-        inputs=edit_video_url,
-        outputs=edit_preview
+        inputs=[
+            edit_video_url
+        ],
+        outputs=[
+            edit_video_file
+        ]
     )
+
+    # -----------------------------------------------------
+    # EDIT VIDEO
+    # -----------------------------------------------------
 
     edit_video_file.change(
-        fn=preview_uploaded_video,
-        inputs=edit_video_file,
-        outputs=edit_preview
+        fn=lambda x: x,
+        inputs=[
+            edit_video_file
+        ],
+        outputs=[
+            edit_preview
+        ]
     )
 
-    # Auto script
-    gen_script_btn.click(
-        fn=send_script_to_editor,
-        inputs=script_display,
-        outputs=edit_script
-    )
+    # -----------------------------------------------------
+    # EDIT VOICE
+    # -----------------------------------------------------
 
-    # Edit voice
     generate_edit_voice_btn.click(
         fn=tts_interface,
         inputs=[
@@ -2754,31 +3420,47 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
         ]
     )
 
-    # Preview
+    # -----------------------------------------------------
+    # PREVIEW
+    # -----------------------------------------------------
+
     preview_button.click(
         fn=preview_render,
         inputs=[
+
             edit_video_file,
             edit_video_url,
+
+            edit_script,
+
             edit_ratio,
+
+            trim_start,
+            trim_end,
+
             zoom_slider,
             brightness_slider,
             flip_checkbox,
+
             original_audio,
             original_volume,
+
             bg_music,
             music_volume,
+
             logo_file,
             logo_enabled,
             logo_x,
             logo_y,
             logo_scale,
+
             blur_enabled,
             blur_x,
             blur_y,
             blur_w,
             blur_h,
             blur_strength,
+
             subtitle_enabled,
             subtitle_language,
             subtitle_size,
@@ -2788,8 +3470,8 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
             subtitle_x,
             subtitle_y,
             subtitle_font,
-            trim_start,
-            trim_end
+
+            edit_voice_preview
         ],
         outputs=[
             edit_preview,
@@ -2797,34 +3479,47 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
         ]
     )
 
-    # Final Render
+    # -----------------------------------------------------
+    # FINAL
+    # -----------------------------------------------------
+
     final_button.click(
         fn=render_video,
         inputs=[
+
             edit_video_file,
             edit_video_url,
+
             edit_script,
+
             edit_ratio,
+
             trim_start,
             trim_end,
+
             zoom_slider,
             brightness_slider,
             flip_checkbox,
+
             original_audio,
             original_volume,
+
             bg_music,
             music_volume,
+
             logo_file,
             logo_enabled,
             logo_x,
             logo_y,
             logo_scale,
+
             blur_enabled,
             blur_x,
             blur_y,
             blur_w,
             blur_h,
             blur_strength,
+
             subtitle_enabled,
             subtitle_language,
             subtitle_size,
@@ -2833,7 +3528,9 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
             subtitle_outline,
             subtitle_x,
             subtitle_y,
-            subtitle_font
+            subtitle_font,
+
+            edit_voice_preview
         ],
         outputs=[
             final_video,
@@ -2841,10 +3538,15 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
         ]
     )
 
+    # Final video → Download
     final_video.change(
         fn=lambda x: x,
-        inputs=final_video,
-        outputs=final_download
+        inputs=[
+            final_video
+        ],
+        outputs=[
+            final_download
+        ]
     )
 
 
@@ -2855,9 +3557,9 @@ Video ကို upload လုပ်ပါ သို့မဟုတ် Link ထ�
 if __name__ == "__main__":
 
     if not ffmpeg_exists():
+
         print(
-            "WARNING: FFmpeg မတွေ့ပါ။ "
-            "Render Environment မှာ FFmpeg install လုပ်ပါ။"
+            "WARNING: FFmpeg မတွေ့ပါ။"
         )
 
     demo.launch(
