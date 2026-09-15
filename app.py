@@ -726,6 +726,12 @@ def download_video_from_link(
     return None
 
 
+def load_link_preview(link):
+    if not link:
+        return None
+    return download_video_from_link(link)
+
+
 def resolve_video(
     video_file,
     video_link
@@ -2681,8 +2687,7 @@ with gr.Blocks(
             with gr.Column():
 
                 video_file = gr.Video(
-                    label="📹 Upload Video",
-                    type="filepath"
+                    label="📹 Upload Video"
                 )
 
                 video_url = gr.Textbox(
@@ -2819,8 +2824,7 @@ with gr.Blocks(
             with gr.Column():
 
                 edit_video_file = gr.Video(
-                    label="📹 Edit Video",
-                    type="filepath"
+                    label="📹 Edit Video"
                 )
 
                 edit_video_url = gr.Textbox(
