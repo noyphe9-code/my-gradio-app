@@ -68,114 +68,8 @@ def get_video_duration(video_path):
         print("Duration Error:", e)
     return None
 
-def detect_scene_boundaries(video_path, threshold=0.35):
-    """Return scene-change timestamps using FFmpeg's scene score detector."""
-    if not video_path or not os.path.exists(video_path):
-        return []
-    cmd = [
-        "ffmpeg", "-hide_banner", "-i", video_path,
-        "-vf", f"select='gt(scene,{threshold})',showinfo",
-        "-an", "-f", "null", "-"
-    ]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
-        return sorted({float(x) for x in re.findall(r"pts_time:([0-9]+(?:\.[0-9]+)?)", result.stderr)})
-    except Exception as e:
-        print("Scene detection skipped:", e)
-        return []
-
-
-def detect_freeze_intervals(video_path, min_duration=1.5):
-    """Find long frozen/near-duplicate visual intervals."""
-    if not video_path or not os.path.exists(video_path):
-        return []
-    cmd = [
-        "ffmpeg", "-hide_banner", "-i", video_path,
-        "-vf", f"freezedetect=n=-60dB:d={min_duration}",
-        "-an", "-f", "null", "-"
-    ]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
-        log = result.stderr
-        starts = [float(x) for x in re.findall(r"freeze_start:([0-9]+(?:\.[0-9]+)?)", log)]
-        ends = [float(x) for x in re.findall(r"freeze_end:([0-9]+(?:\.[0-9]+)?)", log)]
-        intervals = []
-        for i, start in enumerate(starts):
-            end = ends[i] if i < len(ends) else None
-            if end is not None and end - start >= min_duration:
-                intervals.append((start, end))
-        return intervals
-    except Exception as e:
-        print("Freeze detection skipped:", e)
-        return []
-
-
-def build_keep_intervals(duration, removed_intervals, min_clip=0.12):
-    """Subtract removed intervals from the source timeline."""
-    if not duration or duration <= 0:
-        return []
-    cursor = 0.0
-    keep = []
-    for start, end in sorted(removed_intervals):
-        start, end = max(0.0, start), min(duration, end)
-        if start > cursor + min_clip:
-            keep.append((cursor, start))
-        cursor = max(cursor, end)
-    if duration > cursor + min_clip:
-        keep.append((cursor, duration))
-    return keep or [(0.0, duration)]
-
-
-def prepare_scene_aware_video(source_video, output_filename="scene_aware_source.mp4"):
-    """Remove long frozen/duplicate-looking intervals and keep A/V aligned.
-
-    Scene timestamps are detected for diagnostics and cut planning. Long freeze
-    intervals are removed; short scene segments are joined with tiny fades.
-    On any failure, the original source is returned safely.
-    """
-    duration = get_video_duration(source_video)
-    if not duration or duration < 2.0:
-        return source_video
-    scene_points = detect_scene_boundaries(source_video)
-    freeze_intervals = detect_freeze_intervals(source_video)
-    print(f"Scene-aware edit: {len(scene_points)} scene changes, {len(freeze_intervals)} freeze intervals")
-    # Do not remove an entire short clip or more than half its content.
-    removed = [(a, b) for a, b in freeze_intervals if b - a >= 1.5 and (b - a) <= duration * 0.5]
-    keep = build_keep_intervals(duration, removed)
-    if len(keep) <= 1:
-        return source_video
-
-    chains = []
-    has_audio = has_audio_stream(source_video)
-    for i, (start, end) in enumerate(keep):
-        seg_dur = max(0.01, end - start)
-        fade_d = min(0.08, seg_dur / 3.0)
-        chains.append(
-            f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS,"
-            f"fade=t=in:st=0:d={fade_d:.3f},fade=t=out:st={max(0.0, seg_dur-fade_d):.3f}:d={fade_d:.3f}[v{i}]"
-        )
-        if has_audio:
-            chains.append(f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{i}]")
-    if has_audio:
-        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(keep)))
-        chains.append(f"{concat_inputs}concat=n={len(keep)}:v=1:a=1[vout][aout]")
-    else:
-        concat_inputs = "".join(f"[v{i}]" for i in range(len(keep)))
-        chains.append(f"{concat_inputs}concat=n={len(keep)}:v=1:a=0[vout]")
-
-    cmd = ["ffmpeg", "-y", "-i", source_video, "-filter_complex", ";".join(chains), "-map", "[vout]"]
-    if has_audio:
-        cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k"]
-    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-movflags", "+faststart", output_filename]
-    try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=900)
-        return output_filename if os.path.exists(output_filename) else source_video
-    except Exception as e:
-        print("Scene-aware render skipped:", e)
-        return source_video
-
-
 def has_audio_stream(video_path):
+    """ဗီဒီယိုထဲတွင် အသံပါမပါ စစ်ဆေးခြင်း (Silent Video Error ကာကွယ်ရန်)"""
     if not video_path or not os.path.exists(video_path):
         return False
     try:
@@ -345,7 +239,7 @@ Text:
     return text
 
 # =========================================================
-# STABLE CSS & IN-CONTAINER REAL-TIME PREVIEW ENGINE
+# CSS & REAL-TIME PREVIEW ENGINE
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -389,9 +283,9 @@ def hex_to_rgba(hex_code, opacity):
         return f"rgba({r}, {g}, {b}, {opacity})"
     return f"rgba(0, 0, 0, {opacity})"
 
-def get_tab3_in_video_preview_html(
+def get_tab3_full_preview_html(
     sub_lang,
-    ratio, video_speed, flip_h, scale_val, x_off, y_off,
+    ratio, flip_h, scale_val, x_off, y_off,
     crop_w_pct, crop_h_pct,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
@@ -400,21 +294,15 @@ def get_tab3_in_video_preview_html(
     font_family, font_size, font_color, outline_color, sub_x, sub_y
 ):
     configs = {
-        "1:1": {"aspect": "1 / 1", "max_w": "380px"},
-        "3:4": {"aspect": "3 / 4", "max_w": "340px"},
-        "16:9": {"aspect": "16 / 9", "max_w": "520px"},
-        "9:16": {"aspect": "9 / 16", "max_w": "310px"},
+        "1:1": {"aspect": "1 / 1", "max_w": "400px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "360px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "560px"},
+        "9:16": {"aspect": "9 / 16", "max_w": "320px"},
     }
     cfg = configs.get(ratio, configs["9:16"])
-    video_speed = max(0.5, min(2.0, float(video_speed or 1.0)))
     flip_x = "-1" if flip_h else "1"
 
-    # Percentage offset calculation to stay strictly inside video box
-    mask_top_pct = 50 - (mask_y / 5.0)
-    sub_top_pct = 50 - (sub_y / 5.0)
-    logo_top_pct = 50 - (logo_y / 5.0)
-
-    # Mask Overlay
+    # Mask Overlay (Relative to Video Container)
     mask_html = ""
     if mask_enable:
         mask_bg = hex_to_rgba(mask_color, mask_opacity)
@@ -423,14 +311,14 @@ def get_tab3_in_video_preview_html(
         <div style="
             position: absolute;
             left: calc(50% + {mask_x}px);
-            top: {mask_top_pct}%;
+            top: calc(50% - {mask_y}px);
             transform: translate(-50%, -50%);
             width: {mask_w}%;
             height: {mask_h}px;
             background: {mask_bg};
             {mask_backdrop}
             border-radius: 6px;
-            z-index: 40;
+            z-index: 25;
             pointer-events: none;
             box-shadow: 0 0 10px rgba(0,0,0,0.3);
         "></div>
@@ -448,18 +336,18 @@ def get_tab3_in_video_preview_html(
                 <img src="{logo_src}" style="
                     position: absolute;
                     left: calc(50% + {logo_x}px);
-                    top: {logo_top_pct}%;
+                    top: calc(50% - {logo_y}px);
                     transform: translate(-50%, -50%);
                     width: {logo_size}px;
                     height: auto;
-                    z-index: 50;
+                    z-index: 30;
                     pointer-events: none;
                 "/>
                 """
         except Exception:
             pass
 
-    # Subtitle Text Preview
+    # Sample Lines by Language
     if sub_lang == "English":
         sample_l1 = "A man standing on the mountain"
         sample_l2 = "( Sample English Subtitle )"
@@ -477,11 +365,11 @@ def get_tab3_in_video_preview_html(
     <div style="
         position: absolute;
         left: calc(50% + {sub_x}px);
-        top: {sub_top_pct}%;
+        top: calc(50% - {sub_y}px);
         transform: translate(-50%, -50%);
-        width: 92%;
+        width: 95%;
         text-align: center;
-        z-index: 60;
+        z-index: 35;
         pointer-events: none;
     ">
         <span style="
@@ -515,38 +403,24 @@ def get_tab3_in_video_preview_html(
     </div>
     """
 
+    # Video Clip-path for Crop Preview
     inset_x = (100 - crop_w_pct) / 2
     inset_y = (100 - crop_h_pct) / 2
     clip_style = f"clip-path: inset({inset_y:.1f}% {inset_x:.1f}% {inset_y:.1f}% {inset_x:.1f}%);"
 
     return f"""
-    <style id="tab3-preview-master-style">
-    /* Keep the HTML overlay component physically inside the preview wrapper. */
-    #tab3_preview_wrapper {{
+    <style id="tab3-live-preview-style">
+    /* Keep the real Gradio video and the live overlay in one stable stage. */
+    #tab3_stage {{
         position: relative !important;
         width: 100% !important;
-        max-width: {cfg["max_w"]} !important;
-        margin: 0 auto !important;
-    }}
-    #tab3_preview_wrapper > .gr-html,
-    #tab3_preview_wrapper > .html-container,
-    #tab3_preview_wrapper .gr-html-container {{
-        position: absolute !important;
-        inset: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        z-index: 30 !important;
-        pointer-events: none !important;
-    }}
-    #tab3_preview_wrapper #tab3_preview_box {{
-        position: relative !important;
-        z-index: 5 !important;
+        min-height: 320px !important;
     }}
     #tab3_preview_box {{
         width: 100% !important;
+        max-width: {cfg["max_w"]} !important;
         margin: 0 auto !important;
+        position: relative !important;
     }}
     #tab3_preview_box .video-container {{
         width: 100% !important;
@@ -569,22 +443,30 @@ def get_tab3_in_video_preview_html(
         display: block !important;
         position: relative !important;
         z-index: 5 !important;
+        transition: transform 0.15s ease-out;
     }}
-    #tab3_inside_overlay {{
+    #tab3_overlay_host {{
         position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: 0 !important;
+        inset: 0 !important;
         width: 100% !important;
         height: 100% !important;
-        border-radius: 14px !important;
-        overflow: hidden !important;
+        z-index: 20 !important;
         pointer-events: none !important;
-        z-index: 30 !important;
+    }}
+    #tab3_overlay_host #tab3_interactive_overlay {{
+        position: absolute !important;
+        inset: 0 !important;
     }}
     </style>
-    <div id="tab3_inside_overlay">
+    <div id="tab3_interactive_overlay" style="
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        width: 100%; height: 100%;
+        overflow: hidden;
+        border-radius: 14px;
+        pointer-events: none;
+        z-index: 20;
+    ">
         {mask_html}
         {logo_html}
         {sub_html}
@@ -681,7 +563,7 @@ async def generate_tts_file(text, voice_code, speed_percent, output_name="output
     return output_name
 
 # =========================================================
-# ADVANCED FFMPEG COMPOSER (ROBUST & ERROR-FREE)
+# ADVANCED FFMPEG COMPOSER (SAFE & STABLE)
 # =========================================================
 def hex_to_ass_color(hex_str):
     hex_str = hex_str.lstrip("#")
@@ -693,7 +575,7 @@ def hex_to_ass_color(hex_str):
 def render_advanced_clip(
     source_video, tts_audio, srt_path, bgm_audio,
     enable_orig_audio, bgm_volume,
-    ratio_choice, resolution_choice, quality_preset, video_speed, flip_h, scale_val, x_off, y_off,
+    ratio_choice, flip_h, scale_val, x_off, y_off,
     crop_w_pct, crop_h_pct,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
@@ -708,37 +590,8 @@ def render_advanced_clip(
         "16:9": (1920, 1080),
         "9:16": (1080, 1920)
     }
-    base_w, base_h = ratio_dims.get(ratio_choice, (1080, 1920))
-    resolution_short_edge = {
-        "480p": 480,
-        "720p": 720,
-        "1080p": 1080,
-        "1440p": 1440,
-        "Original Canvas": min(base_w, base_h),
-    }.get(resolution_choice, min(base_w, base_h))
-    # The selected p value is the short edge: 1080p becomes 1080x1920
-    # for portrait and 1920x1080 for landscape, without distorting the ratio.
-    scale_ratio = resolution_short_edge / min(base_w, base_h)
-    tw = max(2, int(round(base_w * scale_ratio / 2) * 2))
-    th = max(2, int(round(base_h * scale_ratio / 2) * 2))
+    tw, th = ratio_dims.get(ratio_choice, (1080, 1920))
 
-    quality_settings = {
-        "Fast (သေးငယ်သောဖိုင်)": {"preset": "veryfast", "crf": "26"},
-        "Balanced (အကြံပြု)": {"preset": "medium", "crf": "23"},
-        "High Quality": {"preset": "slow", "crf": "20"},
-        "Best Quality (ဖိုင်ကြီး)": {"preset": "slower", "crf": "18"},
-    }.get(quality_preset, {"preset": "medium", "crf": "23"})
-    # Blur is one of the most expensive filters. Keep it visually smooth,
-    # while using a lighter radius for the speed-oriented export preset.
-    blur_radius = 14 if quality_preset == "Fast (သေးငယ်သောဖိုင်)" else 20
-    blur_power = 6 if quality_preset == "Fast (သေးငယ်သောဖိုင်)" else 8
-
-    video_speed = max(0.5, min(2.0, float(video_speed or 1.0)))
-    source_tts_dur = get_video_duration(tts_audio) or 10.0
-    # Speeding/slowing the video also changes narration duration so the
-    # narration, subtitles, and motion remain aligned as one timeline.
-    tts_dur = source_tts_dur / video_speed
-    speed_filter = f"setpts=PTS/{video_speed},"
     flip_filter = "hflip," if flip_h else ""
     crop_filter = f"crop=iw*{crop_w_pct/100.0:.2f}:ih*{crop_h_pct/100.0:.2f},"
     color_filter = f"eq=brightness={bright_val - 1.0:.2f}:contrast={contrast_val:.2f}"
@@ -746,32 +599,27 @@ def render_advanced_clip(
 
     filter_chains = []
 
-    # Build the canvas background from the ORIGINAL frame, not the cropped
-    # foreground. This prevents white/empty borders when crop_w/crop_h < 100.
     if use_blur_bg:
         filter_chains.append(
-            f"[0:v]split=2[bg_src][fg_src];"
-            f"[bg_src]{speed_filter}{flip_filter}{color_filter},scale={tw}:{th}:force_original_aspect_ratio=increase,"
-            f"crop={tw}:{th},boxblur={blur_radius}:{blur_power},eq=brightness=-0.15[bg_blurred];"
-            f"[fg_src]{speed_filter}{flip_filter}{crop_filter}{color_filter},"
-            f"scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
+            f"[0:v]{flip_filter}{crop_filter}{color_filter},split=2[fg_raw][bg_raw];"
+            f"[bg_raw]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},boxblur=25:10,eq=brightness=-0.15[bg_blurred];"
+            f"[fg_raw]scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
             f"[bg_blurred][fg_scaled]overlay=(W-w)/2+({x_off}):(H-h)/2+({y_off})[v_base]"
         )
     else:
         filter_chains.append(
-            f"[0:v]{speed_filter}{flip_filter}{crop_filter}{color_filter},"
-            f"scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease,"
+            f"[0:v]{flip_filter}{crop_filter}{color_filter},scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease,"
             f"pad={tw}:{th}:(ow-iw)/2+({x_off}):(oh-ih)/2+({y_off}):color=0x{bg_clean}[v_base]"
         )
 
     current_v = "v_base"
 
-    # Mask to cover original subtitles (Percentage matching Preview calculation)
+    # Mask to cover original subtitles
     if mask_enable:
         mw = int(tw * (mask_w / 100.0))
-        mh = int(mask_h * (th / 1920.0 * 2.2))
+        mh = int(mask_h * (th / 1920.0 * 2.0))
         mx = f"(W-{mw})/2+({mask_x})"
-        my = f"(H*0.5)-({mask_y}*(H/1000))-({mh}/2)"
+        my = f"(H-{mh})/2-({mask_y})"
 
         if mask_type == "Blur (ဝေဝါးဖုံး)":
             filter_chains.append(
@@ -796,18 +644,18 @@ def render_advanced_clip(
         logo_idx = next_input_idx
         next_input_idx += 1
         lx = f"(W-w)/2+({logo_x})"
-        ly = f"(H*0.5)-({logo_y}*(H/1000))-(h/2)"
+        ly = f"(H-h)/2-({logo_y})"
         filter_chains.append(
             f"[{logo_idx}:v]scale={logo_size}:-1[scaled_logo];"
             f"[{current_v}][scaled_logo]overlay={lx}:{ly}[v_logoed]"
         )
         current_v = "v_logoed"
 
-    # Subtitles Positioning
+    # Subtitles
     primary_ass = hex_to_ass_color(font_color)
     outline_ass = hex_to_ass_color(outline_color)
     escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
-    calc_margin_v = max(10, int((th / 2) - (sub_y * (th / 1000))))
+    calc_margin_v = max(10, int((th / 2) - sub_y))
     sub_style = (
         f"subtitles='{escaped_srt}':force_style="
         f"'FontName={font_family},FontSize={font_size},"
@@ -816,7 +664,7 @@ def render_advanced_clip(
     )
     filter_chains.append(f"[{current_v}]{sub_style}[vout]")
 
-    # Audio Mixing Configuration
+    # Audio Mixing Configuration (Silent Video Protection)
     audio_inputs_count = 2
     if bgm_audio and os.path.exists(bgm_audio):
         inputs_cmd.extend(["-stream_loop", "-1", "-i", bgm_audio])
@@ -828,38 +676,35 @@ def render_advanced_clip(
 
     audio_filters = []
     if enable_orig_audio and orig_has_audio:
-        audio_filters.append(f"[0:a]atempo={video_speed:.3f},volume=0.2[orig_a];")
+        audio_filters.append("[0:a]volume=0.2[orig_a];")
     else:
-        # Keep the silent track alive for the complete narration duration;
-        # otherwise amix(duration=first) can cut the output to one second.
-        audio_filters.append(f"aevalsrc=0:d={tts_dur:.3f}[orig_a];")
+        audio_filters.append("aevalsrc=0:d=1[orig_a];")
 
-    audio_filters.append(f"[1:a]atempo={video_speed:.3f},volume=1.0[tts_a];")
+    audio_filters.append("[1:a]volume=1.0[tts_a];")
 
     if audio_inputs_count == 3:
         audio_filters.append(f"[{bgm_idx}:a]volume={bgm_volume}[bgm_a];")
-        audio_filters.append("[orig_a][tts_a][bgm_a]amix=inputs=3:duration=longest:dropout_transition=2[aout]")
+        audio_filters.append("[orig_a][tts_a][bgm_a]amix=inputs=3:duration=first:dropout_transition=2[aout]")
     else:
-        audio_filters.append("[orig_a][tts_a]amix=inputs=2:duration=longest:dropout_transition=2[aout]")
+        audio_filters.append("[orig_a][tts_a]amix=inputs=2:duration=first:dropout_transition=2[aout]")
 
     full_filter_complex = ";".join(filter_chains) + ";" + "".join(audio_filters)
+    tts_dur = get_video_duration(tts_audio) or 10.0
+
     cmd = inputs_cmd + [
         "-filter_complex", full_filter_complex,
         "-map", "[vout]", "-map", "[aout]",
         "-t", str(tts_dur),
-        # Let FFmpeg use all available CPU cores and parallelize the filter graph.
-        "-threads", "0", "-filter_threads", "0", "-filter_complex_threads", "0",
-        "-c:v", "libx264", "-preset", quality_settings["preset"], "-crf", quality_settings["crf"], "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-threads", "0",
-        # Makes the exported MP4 start playing while it is downloading.
-        "-movflags", "+faststart", "-map_metadata", "-1",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
         output_filename
     ]
 
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except subprocess.CalledProcessError as e:
-        print("FFmpeg Render Fallback:", e.stderr)
+        print("FFmpeg Full Render Error Log:\n", e.stderr)
+        # Safe Fallback to ensure completion
         fallback_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2"
         fb_cmd = [
             "ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio,
@@ -926,7 +771,7 @@ def tab3_auto_pipeline(
     voice_lang, voice_label, speed,
     sub_lang,
     enable_orig_audio, bgm_vol,
-    ratio, resolution_choice, quality_preset, video_speed, flip_h, scale_val, x_off, y_off,
+    ratio, flip_h, scale_val, x_off, y_off,
     crop_w, crop_h,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
@@ -963,26 +808,18 @@ def tab3_auto_pipeline(
             generate_tts_file(narration_script, voice_code, speed, "tab3_voice.mp3")
         )
 
-        audio_dur = (get_video_duration(audio_file) or 10.0) / max(0.5, min(2.0, float(video_speed or 1.0)))
+        audio_dur = get_video_duration(audio_file)
         srt_file, _ = generate_srt_and_zip(subtitle_script, total_target_duration=audio_dur, prefix="tab3_sub")
 
-        # ၄။ Scene-aware preprocessing: remove long frozen/duplicate-looking
-        # intervals and join the remaining A/V segments smoothly. If FFmpeg
-        # detection fails, the helper safely returns the original source.
-        render_source = prepare_scene_aware_video(target, "scene_aware_source.mp4")
-
-        # ၅။ Video Render ပြုလုပ်ခြင်း
+        # ၄။ Video Render ပြုလုပ်ခြင်း
         final_video = render_advanced_clip(
-            source_video=render_source,
+            source_video=target,
             tts_audio=audio_file,
             srt_path=srt_file,
             bgm_audio=bgm_file,
             enable_orig_audio=enable_orig_audio,
             bgm_volume=bgm_vol,
             ratio_choice=ratio,
-            resolution_choice=resolution_choice,
-            quality_preset=quality_preset,
-            video_speed=video_speed,
             flip_h=flip_h,
             scale_val=scale_val,
             x_off=x_off,
@@ -1022,7 +859,7 @@ def tab3_auto_pipeline(
 # =========================================================
 # GRADIO UI
 # =========================================================
-with gr.Blocks(title=APP_TITLE) as demo:
+with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}\n**All-in-One Professional Multilingual Movie Recap Studio**")
 
     with gr.Tabs() as main_tabs:
@@ -1110,30 +947,17 @@ with gr.Blocks(title=APP_TITLE) as demo:
                             value="မြန်မာ (Burmese)", 
                             label="📝 စာတန်းထိုး ဘာသာစကား"
                         )
-                        t3_font = gr.Dropdown(["Pyidaungsu", "Padauk", "Myanmar Text", "Arial", "sans-serif"], value="Pyidaungsu", label="🔤 Subtitle Font ဒီဇိုင်း")
-                        t3_fsize = gr.Slider(10, 100, value=22, step=1, label="📏 Subtitle Font အရွယ်အစား (Preview + Final)")
+                        t3_font = gr.Dropdown(["Pyidaungsu", "Padauk", "Myanmar Text", "Arial", "sans-serif"], value="Pyidaungsu", label="🔤 Font ဒီဇိုင်း")
+                        t3_fsize = gr.Slider(14, 48, value=22, step=1, label="📏 စာလုံး အရွယ်အစား")
                         with gr.Row():
-                            t3_fcolor = gr.ColorPicker(label="🎨 Subtitle စာလုံးအရောင်", value="#00E676")
-                            t3_ocolor = gr.ColorPicker(label="🖌️ Subtitle Outline အရောင်", value="#000000")
+                            t3_fcolor = gr.ColorPicker(label="🎨 စာလုံးအရောင်", value="#00E676")
+                            t3_ocolor = gr.ColorPicker(label="🖌️ အနားသတ် အကြမ်းရောင် (Outline)", value="#000000")
                         with gr.Row():
                             t3_sub_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ စာတန်းထိုး ဘယ်/ညာ ရွှေ့မည်")
-                            t3_sub_y = gr.Slider(-450, 450, value=-260, step=5, label="↕️ စာတန်းထိုး အပေါ်/အောက် ရွှေ့မည် (အဆုံးထိရွှေ့နိုင်)")
+                            t3_sub_y = gr.Slider(-750, 750, value=-260, step=5, label="↕️ စာတန်းထိုး အပေါ်/အောက် ရွှေ့မည် (အဆုံးထိရွှေ့နိုင်)")
 
                     with gr.Accordion("✂️ Video Crop (အတိုး/အလျော့ဖြတ်တောက်မှု) & ပုံစံ", open=True):
                         t3_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="9:16", label="📐 Aspect Ratio ရွေးပါ")
-                        with gr.Row():
-                            t3_resolution = gr.Dropdown(
-                                ["480p", "720p", "1080p", "1440p", "Original Canvas"],
-                                value="1080p", label="🖥️ Video Resolution"
-                            )
-                            t3_quality = gr.Dropdown(
-                                ["Fast (သေးငယ်သောဖိုင်)", "Balanced (အကြံပြု)", "High Quality", "Best Quality (ဖိုင်ကြီး)"],
-                                value="Balanced (အကြံပြု)", label="🎞️ Video Quality"
-                            )
-                        t3_video_speed = gr.Slider(
-                            0.5, 2.0, value=1.0, step=0.05,
-                            label="⏩ Video Speed (0.5× အနှေး — 2.0× အမြန်)"
-                        )
                         with gr.Row():
                             t3_crop_w = gr.Slider(30, 100, value=100, step=1, label="✂️ ဘယ်/ညာ Crop အကျယ် (%)")
                             t3_crop_h = gr.Slider(30, 100, value=100, step=1, label="✂️ အပေါ်/အောက် Crop အမြင့် (%)")
@@ -1159,33 +983,38 @@ with gr.Blocks(title=APP_TITLE) as demo:
                             t3_mask_h = gr.Slider(10, 300, value=85, step=2, label="↕️ Mask အမြင့် (px)")
                         with gr.Row():
                             t3_mask_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ Mask ဘယ်/ညာ ရွှေ့မည်")
-                            t3_mask_y = gr.Slider(-450, 450, value=-260, step=5, label="↕️ Mask အပေါ်/အောက် ရွှေ့မည် (အဆုံးထိရွှေ့နိုင်)")
+                            t3_mask_y = gr.Slider(-750, 750, value=-260, step=5, label="↕️ Mask အပေါ်/အောက် ရွှေ့မည် (အဆုံးထိရွှေ့နိုင်)")
 
                     with gr.Accordion("🏷️ Logo တံဆိပ် ထည့်သွင်းခြင်း", open=False):
                         t3_logo_file = gr.Image(label="🖼️ Logo ပုံတင်ရန် (PNG / JPG)", type="filepath")
                         t3_logo_size = gr.Slider(30, 400, value=100, step=5, label="📏 Logo အရွယ်အစား (px)")
                         with gr.Row():
                             t3_logo_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ Logo ဘယ်/ညာ ရွှေ့မည်")
-                            t3_logo_y = gr.Slider(-450, 450, value=250, step=5, label="↕️ Logo အပေါ်/အောက် ရွှေ့မည်")
+                            t3_logo_y = gr.Slider(-750, 750, value=300, step=5, label="↕️ Logo အပေါ်/အောက် ရွှေ့မည်")
 
                     t3_run_btn = gr.Button("✨ Video အပြီးစီး One-Click ထုတ်လုပ်မည်", variant="primary", size="lg")
 
-                # RIGHT COLUMN: REAL-TIME IN-VIDEO PREVIEW & FINAL VIDEO
+                # RIGHT COLUMN: REAL-TIME PREVIEW & FINAL VIDEO
                 with gr.Column(scale=1):
-                    # Wrapper Div to perfectly lock overlay inside Video Preview
-                    with gr.Group(elem_id="tab3_preview_wrapper"):
-                        t3_live_video = gr.Video(label="📺 Real-Time Preview (Preview ဘောင်အတွင်း ကွက်တိပြသမှု)", elem_id="tab3_preview_box")
+                    # The video is deliberately kept as a separate stable component.
+                    # Only the overlay HTML is replaced when settings change.
+                    with gr.Column(elem_id="tab3_stage"):
+                        t3_live_video = gr.Video(
+                            label="📺 Real-Time Preview (Preview ဘောင်အတွင်း ကွက်တိပြသမှု)",
+                            elem_id="tab3_preview_box"
+                        )
                         t3_preview_css = gr.HTML(
-                            get_tab3_in_video_preview_html(
+                            get_tab3_full_preview_html(
                                 "မြန်မာ (Burmese)",
-                                "9:16", 1.0, False, 1.0, 0, 0,
+                                "9:16", False, 1.0, 0, 0,
                                 100, 100,
                                 True, "#000000",
                                 1.0, 1.0,
                                 True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 85, 0, -260,
-                                None, 100, 0, 250,
+                                None, 100, 0, 300,
                                 "Pyidaungsu", 22, "#00E676", "#000000", 0, -260
-                            )
+                            ),
+                            elem_id="tab3_overlay_host"
                         )
                     t3_status = gr.Markdown("စာတန်းထိုးနှင့် Mask များကို Preview Video ဘောင်အတွင်း အပေါ်အောက် အဆုံးထိ စိတ်ကြိုက်ဆွဲရွှေ့နိုင်ပါသည်။")
                     t3_final_video = gr.Video(label="🎬 အပြီးစီး Final Video Output (Playable)")
@@ -1217,13 +1046,13 @@ with gr.Blocks(title=APP_TITLE) as demo:
     # Tab 3 - Voice Selection
     t3_voice_lang.change(update_voice_choices, inputs=t3_voice_lang, outputs=t3_voice)
 
-    # Tab 3 - Real-Time Preview Updates (Preserves Video, Never hides it)
+    # Tab 3 - Real-Time Preview Updates
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_live_video)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_live_video)
 
     preview_all_inputs = [
         t3_sub_lang,
-        t3_ratio, t3_video_speed, t3_flip, t3_scale, t3_x_off, t3_y_off,
+        t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
         t3_crop_w, t3_crop_h,
         t3_blur_bg, t3_bgcolor,
         t3_bright, t3_contrast,
@@ -1232,15 +1061,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
         t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_x, t3_sub_y
     ]
     for comp in preview_all_inputs:
-        if comp is t3_video_speed:
-            comp.change(
-                get_tab3_in_video_preview_html,
-                inputs=preview_all_inputs,
-                outputs=t3_preview_css,
-                js="(...args) => { const v = document.querySelector('#tab3_preview_box video'); if (v) v.playbackRate = Number(args[2] || 1); return args; }"
-            )
-        else:
-            comp.change(get_tab3_in_video_preview_html, inputs=preview_all_inputs, outputs=t3_preview_css)
+        comp.change(get_tab3_full_preview_html, inputs=preview_all_inputs, outputs=t3_preview_css)
 
     # Tab 3 - Generate Final One-Clip Video
     t3_run_btn.click(
@@ -1250,7 +1071,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
             t3_voice_lang, t3_voice, t3_speed,
             t3_sub_lang,
             t3_orig_audio, t3_bgm_vol,
-            t3_ratio, t3_resolution, t3_quality, t3_video_speed, t3_flip, t3_scale, t3_x_off, t3_y_off,
+            t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
             t3_crop_w, t3_crop_h,
             t3_blur_bg, t3_bgcolor,
             t3_bright, t3_contrast,
@@ -1264,4 +1085,4 @@ with gr.Blocks(title=APP_TITLE) as demo:
 # Render Server Launch Port
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
+    demo.launch(server_name="0.0.0.0", server_port=port)
