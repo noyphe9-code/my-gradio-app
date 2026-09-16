@@ -1,4 +1,3 @@
-Tab 3 အပိုင်းနှင့် မလိုအပ်တော့သော function များကို ဖြုတ်ပေးထားပြီး Tab 1 (Script ထုတ်ယူခြင်း) နှင့် Tab 2 (မြန်မာအသံဖတ်ကြားခြင်း) သာ ပါဝင်သည့် app.py Code အပြည့်အစုံ ဖြစ်ပါသည်။
 import os
 import re
 import time
@@ -10,9 +9,6 @@ import edge_tts
 import yt_dlp
 from google import genai
 
-# =========================================================
-# APP CONFIG & SETTINGS
-# =========================================================
 APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
@@ -28,9 +24,6 @@ VOICES = {
     "Nilar (အမျိုးသမီးအသံ) - Natural": "my-MM-NilarNeural",
 }
 
-# =========================================================
-# API KEY & SYSTEM HELPERS
-# =========================================================
 def save_api_key(api_key):
     global SAVED_API_KEY
     if api_key and api_key.strip():
@@ -133,9 +126,6 @@ def download_video_from_link(link):
         print("Download Error:", e)
     return None
 
-# =========================================================
-# CSS & ASPECT RATIO INJECTION
-# =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
         "9:16": {"aspect": "9 / 16", "max_width": "360px"},
@@ -169,9 +159,6 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
     </style>
     """
 
-# =========================================================
-# GEMINI CORE
-# =========================================================
 def build_recap_prompt(selected_ratio):
     return f"""
 သင်သည် Professional Movie Recap Creator တစ်ယောက်ဖြစ်သည်။ ပေးထားသော Video ကို အစမှအဆုံးအထိ သေချာကြည့်ရှု၊ နားထောင်ပြီး Video ထဲတွင် တကယ်ဖြစ်ပျက်နေသော အဖြစ်အပျက်များကို အခြေခံ၍ သဘာဝကျသော မြန်မာ Movie Recap Script တစ်ခုရေးပါ။
@@ -231,9 +218,6 @@ def run_gemini_video_analysis(target_media, ratio_choice):
     clean_text = clean_script_for_tts(script_text)
     return clean_text, used_model, msg
 
-# =========================================================
-# TTS LOGIC
-# =========================================================
 async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="tab2_output.mp3"):
     clean_text = clean_script_for_tts(text)
     if not clean_text:
@@ -245,9 +229,6 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     srt_file, zip_file = generate_srt_and_zip(clean_text, prefix=output_name.replace(".mp3", ""))
     return output_name, srt_file, zip_file
 
-# =========================================================
-# TAB CONTROLLERS
-# =========================================================
 def tab1_analyze(v_file, v_url, ratio):
     target = v_file if v_file else download_video_from_link(v_url)
     if not target or not os.path.exists(target):
@@ -268,14 +249,10 @@ def tab2_tts(text, voice, speed):
         print("Tab 2 Error:", e)
         return None, None, None, None
 
-# =========================================================
-# GRADIO UI (TABS 1 & 2 ONLY)
-# =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}\n**Video Recap Script Generator & Myanmar Voice-Over**")
-    
+
     with gr.Tabs():
-        # --- API KEY TAB ---
         with gr.TabItem("🔑 API Key Setting"):
             gr.Markdown("### 🔐 Gemini API Key ထည့်သွင်းပါ")
             api_key_input = gr.Textbox(label="Gemini API Key", type="password", placeholder="AIzaSy...")
@@ -283,7 +260,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             key_status = gr.Markdown("")
             save_key_btn.click(save_api_key, inputs=api_key_input, outputs=key_status)
 
-        # --- TAB 1: SCRIPT ---
         with gr.TabItem("1️⃣ Video Analysis & Script"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -306,7 +282,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
             v1_gen_btn.click(tab1_analyze, inputs=[v1_file, v1_url, v1_ratio], outputs=[v1_script_out, v1_status, v1_srt, v1_zip])
 
-        # --- TAB 2: TTS ---
         with gr.TabItem("2️⃣ Text-to-Speech"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -323,8 +298,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
-# Render Service အတွက် Launch Port ချိန်ညှိချက်
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
-
