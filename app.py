@@ -238,8 +238,17 @@ Text:
     return text
 
 # =========================================================
-# STABLE CSS & IN-CONTAINER REAL-TIME PREVIEW ENGINE
+# PREVIEW ENGINE: MOUNTED DIRECTLY INSIDE VIDEO SCREEN
 # =========================================================
+def hex_to_rgba(hex_code, opacity):
+    hex_code = hex_code.lstrip("#")
+    if len(hex_code) == 6:
+        r = int(hex_code[0:2], 16)
+        g = int(hex_code[2:4], 16)
+        b = int(hex_code[4:6], 16)
+        return f"rgba({r}, {g}, {b}, {opacity})"
+    return f"rgba(0, 0, 0, {opacity})"
+
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
         "1:1": {"aspect": "1 / 1", "max_w": "450px"},
@@ -273,20 +282,11 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
     </style>
     """
 
-def hex_to_rgba(hex_code, opacity):
-    hex_code = hex_code.lstrip("#")
-    if len(hex_code) == 6:
-        r = int(hex_code[0:2], 16)
-        g = int(hex_code[2:4], 16)
-        b = int(hex_code[4:6], 16)
-        return f"rgba({r}, {g}, {b}, {opacity})"
-    return f"rgba(0, 0, 0, {opacity})"
-
 def get_tab3_in_video_preview_html(
     sub_lang,
     ratio, flip_h, scale_val, x_off, y_off,
     crop_w_pct, crop_h_pct,
-    use_blur_bg, bg_color,
+    crop_bg_type, crop_bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
     logo_file, logo_size, logo_x, logo_y,
@@ -301,10 +301,10 @@ def get_tab3_in_video_preview_html(
     cfg = configs.get(ratio, configs["9:16"])
     flip_x = "-1" if flip_h else "1"
 
-    # Percentage offset calculation to stay strictly inside video box
-    mask_top_pct = 50 - (mask_y / 5.0)
-    sub_top_pct = 50 - (sub_y / 5.0)
-    logo_top_pct = 50 - (logo_y / 5.0)
+    # Percentage Calculations to stay precisely inside the video box
+    mask_top_pct = 50.0 - (mask_y / 6.5)
+    sub_top_pct = 50.0 - (sub_y / 6.5)
+    logo_top_pct = 50.0 - (logo_y / 6.5)
 
     # Mask Overlay
     mask_html = ""
@@ -407,17 +407,32 @@ def get_tab3_in_video_preview_html(
     </div>
     """
 
+    # Background behind cropped area (Blur or Color)
+    if crop_bg_type == "Blur (ဝေဝါးသော နောက်ခံ)":
+        canvas_bg_css = "background: #000; filter: blur(15px);"
+        wrapper_bg = "#000"
+    else:
+        canvas_bg_css = f"background: {crop_bg_color};"
+        wrapper_bg = crop_bg_color
+
+    # Inset Crop calculation
     inset_x = (100 - crop_w_pct) / 2
     inset_y = (100 - crop_h_pct) / 2
-    clip_style = f"clip-path: inset({inset_y:.1f}% {inset_x:.1f}% {inset_y:.1f}% {inset_x:.1f}%);"
+    crop_scale_x = crop_w_pct / 100.0
+    crop_scale_y = crop_h_pct / 100.0
 
     return f"""
     <style id="tab3-preview-master-style">
+    /* Video Box Styling & Positioning */
     #tab3_preview_wrapper {{
         position: relative !important;
         width: 100% !important;
         max-width: {cfg["max_w"]} !important;
         margin: 0 auto !important;
+        background: {wrapper_bg} !important;
+        border-radius: 14px !important;
+        overflow: hidden !important;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.4) !important;
     }}
     #tab3_preview_box {{
         width: 100% !important;
@@ -427,36 +442,31 @@ def get_tab3_in_video_preview_html(
         width: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
         height: auto !important;
-        background: {bg_color} !important;
-        border-radius: 14px !important;
-        overflow: hidden !important;
+        background: {wrapper_bg} !important;
         position: relative !important;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.4) !important;
+        overflow: hidden !important;
     }}
     #tab3_preview_box video {{
         width: 100% !important;
         height: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
         object-fit: contain !important;
-        transform: scale({scale_val}) scaleX({flip_x}) translate({x_off}px, {y_off}px) !important;
+        transform: scale({scale_val * crop_scale_x}, {scale_val * crop_scale_y}) scaleX({flip_x}) translate({x_off}px, {y_off}px) !important;
         filter: brightness({bright_val}) contrast({contrast_val}) !important;
-        {clip_style}
         display: block !important;
         position: relative !important;
         z-index: 5 !important;
     }}
+    /* Fixed Interactive Overlay over Video Screen */
     #tab3_inside_overlay {{
         position: absolute !important;
         top: 0 !important;
         left: 0 !important;
-        right: 0 !important;
-        bottom: 0 !important;
         width: 100% !important;
         height: 100% !important;
-        border-radius: 14px !important;
-        overflow: hidden !important;
         pointer-events: none !important;
         z-index: 30 !important;
+        overflow: hidden !important;
     }}
     </style>
     <div id="tab3_inside_overlay">
@@ -556,7 +566,7 @@ async def generate_tts_file(text, voice_code, speed_percent, output_name="output
     return output_name
 
 # =========================================================
-# ADVANCED FFMPEG COMPOSER (ROBUST & ERROR-FREE)
+# ADVANCED FFMPEG COMPOSER (CROP WITH BLUR/COLOR BACKGROUND)
 # =========================================================
 def hex_to_ass_color(hex_str):
     hex_str = hex_str.lstrip("#")
@@ -570,7 +580,7 @@ def render_advanced_clip(
     enable_orig_audio, bgm_volume,
     ratio_choice, flip_h, scale_val, x_off, y_off,
     crop_w_pct, crop_h_pct,
-    use_blur_bg, bg_color,
+    crop_bg_type, crop_bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
     logo_file, logo_size, logo_x, logo_y,
@@ -588,15 +598,16 @@ def render_advanced_clip(
     flip_filter = "hflip," if flip_h else ""
     crop_filter = f"crop=iw*{crop_w_pct/100.0:.2f}:ih*{crop_h_pct/100.0:.2f},"
     color_filter = f"eq=brightness={bright_val - 1.0:.2f}:contrast={contrast_val:.2f}"
-    bg_clean = bg_color.lstrip("#")
+    bg_clean = crop_bg_color.lstrip("#")
 
     filter_chains = []
 
-    if use_blur_bg:
+    # Background Handling (Blur vs Color)
+    if crop_bg_type == "Blur (ဝေဝါးသော နောက်ခံ)":
         filter_chains.append(
-            f"[0:v]{flip_filter}{crop_filter}{color_filter},split=2[fg_raw][bg_raw];"
+            f"[0:v]{flip_filter}{color_filter},split=2[fg_raw][bg_raw];"
             f"[bg_raw]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},boxblur=25:10,eq=brightness=-0.15[bg_blurred];"
-            f"[fg_raw]scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
+            f"[fg_raw]{crop_filter}scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
             f"[bg_blurred][fg_scaled]overlay=(W-w)/2+({x_off}):(H-h)/2+({y_off})[v_base]"
         )
     else:
@@ -607,7 +618,7 @@ def render_advanced_clip(
 
     current_v = "v_base"
 
-    # Mask to cover original subtitles (Percentage matching Preview calculation)
+    # Mask to cover original subtitles
     if mask_enable:
         mw = int(tw * (mask_w / 100.0))
         mh = int(mask_h * (th / 1920.0 * 2.2))
@@ -765,7 +776,7 @@ def tab3_auto_pipeline(
     enable_orig_audio, bgm_vol,
     ratio, flip_h, scale_val, x_off, y_off,
     crop_w, crop_h,
-    use_blur_bg, bg_color,
+    crop_bg_type, crop_bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
     logo_file, logo_size, logo_x, logo_y,
@@ -818,8 +829,8 @@ def tab3_auto_pipeline(
             y_off=y_off,
             crop_w_pct=crop_w,
             crop_h_pct=crop_h,
-            use_blur_bg=use_blur_bg,
-            bg_color=bg_color,
+            crop_bg_type=crop_bg_type,
+            crop_bg_color=crop_bg_color,
             bright_val=bright_val,
             contrast_val=contrast_val,
             mask_enable=mask_enable,
@@ -908,7 +919,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
         # --- TAB 3: ONE-CLICK ADVANCED MULTILINGUAL STUDIO ---
         with gr.TabItem("⚡ 3️⃣ One-Click All-in-One Video Studio", id="tab_auto"):
-            gr.Markdown("### 🎛️ Video Crop, Extended Range Mask & Positioning Studio")
+            gr.Markdown("### 🎛️ Video Screen ပေါ်တွင် တိုက်ရိုက်ကပ်ထားသော စာတန်းထိုး & Blur Mask Studio")
             
             with gr.Row():
                 # LEFT COLUMN: SETTINGS
@@ -933,7 +944,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         t3_bgm_file = gr.Audio(label="🎵 Background Music (BGM) ထည့်ရန်", type="filepath")
                         t3_bgm_vol = gr.Slider(0.0, 1.0, value=0.15, step=0.05, label="🎚️ BGM အသံအတိုး/အလျှော့ (Volume)")
 
-                    with gr.Accordion("✍️ စာတန်းထိုး ဘာသာစကား & နေရာဆွဲရွှေ့ခြင်း (အပေါ်အောက် အဆုံးထိရွှေ့နိုင်သည်)", open=True):
+                    with gr.Accordion("✍️ စာတန်းထိုး ဘာသာစကား & နေရာဆွဲရွှေ့ခြင်း (Video ပေါ်တွင် တိုက်ရိုက်ရွှေ့နိုင်သည်)", open=True):
                         t3_sub_lang = gr.Radio(
                             SUBTITLE_LANG_CHOICES, 
                             value="မြန်မာ (Burmese)", 
@@ -945,26 +956,30 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                             t3_fcolor = gr.ColorPicker(label="🎨 စာလုံးအရောင်", value="#00E676")
                             t3_ocolor = gr.ColorPicker(label="🖌️ အနားသတ် အကြမ်းရောင် (Outline)", value="#000000")
                         with gr.Row():
-                            t3_sub_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ စာတန်းထိုး ဘယ်/ညာ ရွှေ့မည်")
-                            t3_sub_y = gr.Slider(-450, 450, value=-260, step=5, label="↕️ စာတန်းထိုး အပေါ်/အောက် ရွှေ့မည် (အဆုံးထိရွှေ့နိုင်)")
+                            t3_sub_x = gr.Slider(-350, 350, value=0, step=5, label="↔️ စာတန်းထိုး ဘယ်/ညာ ရွှေ့မည်")
+                            t3_sub_y = gr.Slider(-350, 350, value=-120, step=5, label="↕️ စာတန်းထိုး အပေါ်/အောက် ရွှေ့မည်")
 
-                    with gr.Accordion("✂️ Video Crop (အတိုး/အလျော့ဖြတ်တောက်မှု) & ပုံစံ", open=True):
+                    with gr.Accordion("✂️ Video Crop (ဖြတ်တောက်မှု) & Crop နေရာလွတ် အရောင်/Blur ရွေးချယ်မှု", open=True):
                         t3_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="9:16", label="📐 Aspect Ratio ရွေးပါ")
                         with gr.Row():
                             t3_crop_w = gr.Slider(30, 100, value=100, step=1, label="✂️ ဘယ်/ညာ Crop အကျယ် (%)")
                             t3_crop_h = gr.Slider(30, 100, value=100, step=1, label="✂️ အပေါ်/အောက် Crop အမြင့် (%)")
+                        
+                        # Crop လုပ်သည့်အခါ အဖြူရောင်မဖြစ်စေဘဲ Blur သို့မဟုတ် Color ထည့်သွင်းခြင်း
+                        with gr.Row():
+                            t3_crop_bg_type = gr.Radio(["Blur (ဝေဝါးသော နောက်ခံ)", "Solid Color (အရောင်တစ်ပြေးညီ)"], value="Blur (ဝေဝါးသော နောက်ခံ)", label="🎨 Crop နေရာလွတ် နောက်ခံပုံစံ")
+                            t3_crop_bg_color = gr.ColorPicker(label="🎨 နောက်ခံအရောင် ရွေးပါ", value="#000000")
+
                         t3_scale = gr.Slider(0.5, 2.5, value=1.0, step=0.05, label="🔍 Video Zoom အကြီး/အသေး")
                         t3_flip = gr.Checkbox(label="🔄 ဗီဒီယို ဘယ်ညာလှန်မည် (Horizontal Flip)", value=False)
                         with gr.Row():
-                            t3_x_off = gr.Slider(-500, 500, value=0, step=5, label="↔️ Video ဘယ်/ညာ ရွှေ့မည်")
-                            t3_y_off = gr.Slider(-500, 500, value=0, step=5, label="↕️ Video အပေါ်/အောက် ရွှေ့မည်")
-                        t3_blur_bg = gr.Checkbox(label="🌫️ Background Blur (ဝေဝါးသော နောက်ခံ) အသုံးပြုမည်", value=True)
+                            t3_x_off = gr.Slider(-350, 350, value=0, step=5, label="↔️ Video ဘယ်/ညာ ရွှေ့မည်")
+                            t3_y_off = gr.Slider(-350, 350, value=0, step=5, label="↕️ Video အပေါ်/အောက် ရွှေ့မည်")
                         with gr.Row():
                             t3_bright = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="☀️ Brightness (အလင်း/အမှောင်)")
                             t3_contrast = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="🌓 Contrast (အနု/အရင့်)")
-                        t3_bgcolor = gr.ColorPicker(label="🎨 Canvas အရောင် (Blur ပိတ်ထားပါက)", value="#000000")
 
-                    with gr.Accordion("🛡️ မူရင်းစာတန်းထိုး ဖုံးအုပ်မည့် Mask (အပေါ်အောက် အဆုံးထိရွှေ့နိုင်သည်)", open=True):
+                    with gr.Accordion("🛡️ မူရင်းစာတန်းထိုး ဖုံးအုပ်မည့် Mask (Video ပေါ်တွင် တိုက်ရိုက်ရွှေ့နိုင်သည်)", open=True):
                         t3_mask_enable = gr.Checkbox(label="✅ စာတန်းထိုး ဖုံးအုပ်မည့် Mask ဖွင့်မည်", value=True)
                         t3_mask_type = gr.Radio(["Blur (ဝေဝါးဖုံး)", "Color Box (အရောင်အတုံးဖြင့်ဖုံး)"], value="Blur (ဝေဝါးဖုံး)", label="🎭 Mask ပုံစံ")
                         with gr.Row():
@@ -972,38 +987,38 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                             t3_mask_opacity = gr.Slider(0.0, 1.0, value=0.85, step=0.05, label="💧 Opacity (အရောင် အတိုး/အလျှော့)")
                         with gr.Row():
                             t3_mask_w = gr.Slider(10, 100, value=85, step=1, label="↔️ Mask အကျယ် (%)")
-                            t3_mask_h = gr.Slider(10, 300, value=85, step=2, label="↕️ Mask အမြင့် (px)")
+                            t3_mask_h = gr.Slider(10, 250, value=75, step=2, label="↕️ Mask အမြင့် (px)")
                         with gr.Row():
-                            t3_mask_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ Mask ဘယ်/ညာ ရွှေ့မည်")
-                            t3_mask_y = gr.Slider(-450, 450, value=-260, step=5, label="↕️ Mask အပေါ်/အောက် ရွှေ့မည် (အဆုံးထိရွှေ့နိုင်)")
+                            t3_mask_x = gr.Slider(-350, 350, value=0, step=5, label="↔️ Mask ဘယ်/ညာ ရွှေ့မည်")
+                            t3_mask_y = gr.Slider(-350, 350, value=-120, step=5, label="↕️ Mask အပေါ်/အောက် ရွှေ့မည်")
 
                     with gr.Accordion("🏷️ Logo တံဆိပ် ထည့်သွင်းခြင်း", open=False):
                         t3_logo_file = gr.Image(label="🖼️ Logo ပုံတင်ရန် (PNG / JPG)", type="filepath")
-                        t3_logo_size = gr.Slider(30, 400, value=100, step=5, label="📏 Logo အရွယ်အစား (px)")
+                        t3_logo_size = gr.Slider(30, 350, value=90, step=5, label="📏 Logo အရွယ်အစား (px)")
                         with gr.Row():
-                            t3_logo_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ Logo ဘယ်/ညာ ရွှေ့မည်")
-                            t3_logo_y = gr.Slider(-450, 450, value=250, step=5, label="↕️ Logo အပေါ်/အောက် ရွှေ့မည်")
+                            t3_logo_x = gr.Slider(-350, 350, value=0, step=5, label="↔️ Logo ဘယ်/ညာ ရွှေ့မည်")
+                            t3_logo_y = gr.Slider(-350, 350, value=140, step=5, label="↕️ Logo အပေါ်/အောက် ရွှေ့မည်")
 
                     t3_run_btn = gr.Button("✨ Video အပြီးစီး One-Click ထုတ်လုပ်မည်", variant="primary", size="lg")
 
                 # RIGHT COLUMN: REAL-TIME IN-VIDEO PREVIEW & FINAL VIDEO
                 with gr.Column(scale=1):
-                    # Wrapper Div to perfectly lock overlay inside Video Preview
+                    # Outer Container with Fixed Position Locking
                     with gr.Group(elem_id="tab3_preview_wrapper"):
-                        t3_live_video = gr.Video(label="📺 Real-Time Preview (Preview ဘောင်အတွင်း ကွက်တိပြသမှု)", elem_id="tab3_preview_box")
+                        t3_live_video = gr.Video(label="📺 Real-Time Preview (Video Screen ပေါ်တွင် တိုက်ရိုက်ပြသမှု)", elem_id="tab3_preview_box")
                         t3_preview_css = gr.HTML(
                             get_tab3_in_video_preview_html(
                                 "မြန်မာ (Burmese)",
                                 "9:16", False, 1.0, 0, 0,
                                 100, 100,
-                                True, "#000000",
+                                "Blur (ဝေဝါးသော နောက်ခံ)", "#000000",
                                 1.0, 1.0,
-                                True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 85, 0, -260,
-                                None, 100, 0, 250,
-                                "Pyidaungsu", 22, "#00E676", "#000000", 0, -260
+                                True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 75, 0, -120,
+                                None, 90, 0, 140,
+                                "Pyidaungsu", 22, "#00E676", "#000000", 0, -120
                             )
                         )
-                    t3_status = gr.Markdown("စာတန်းထိုးနှင့် Mask များကို Preview Video ဘောင်အတွင်း အပေါ်အောက် အဆုံးထိ စိတ်ကြိုက်ဆွဲရွှေ့နိုင်ပါသည်။")
+                    t3_status = gr.Markdown("စာတန်းထိုးနှင့် Mask များသည် Video Screen မျက်နှာပြင်ပေါ်တွင်သာ တိုက်ရိုက်ကပ်လျက် တည်ရှိနေပါမည်။")
                     t3_final_video = gr.Video(label="🎬 အပြီးစီး Final Video Output (Playable)")
                     t3_script_view = gr.Textbox(label="📝 ထွက်ရှိလာသော စာတန်းထိုး Script", lines=5)
                     with gr.Row():
@@ -1033,7 +1048,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     # Tab 3 - Voice Selection
     t3_voice_lang.change(update_voice_choices, inputs=t3_voice_lang, outputs=t3_voice)
 
-    # Tab 3 - Real-Time Preview Updates (Preserves Video, Never hides it)
+    # Tab 3 - Video Loading
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_live_video)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_live_video)
 
@@ -1041,7 +1056,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         t3_sub_lang,
         t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
         t3_crop_w, t3_crop_h,
-        t3_blur_bg, t3_bgcolor,
+        t3_crop_bg_type, t3_crop_bg_color,
         t3_bright, t3_contrast,
         t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
         t3_logo_file, t3_logo_size, t3_logo_x, t3_logo_y,
@@ -1060,7 +1075,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             t3_orig_audio, t3_bgm_vol,
             t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
             t3_crop_w, t3_crop_h,
-            t3_blur_bg, t3_bgcolor,
+            t3_crop_bg_type, t3_crop_bg_color,
             t3_bright, t3_contrast,
             t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
             t3_logo_file, t3_logo_size, t3_logo_x, t3_logo_y,
