@@ -68,6 +68,113 @@ def get_video_duration(video_path):
         print("Duration Error:", e)
     return None
 
+def detect_scene_boundaries(video_path, threshold=0.35):
+    """Return scene-change timestamps using FFmpeg's scene score detector."""
+    if not video_path or not os.path.exists(video_path):
+        return []
+    cmd = [
+        "ffmpeg", "-hide_banner", "-i", video_path,
+        "-vf", f"select='gt(scene,{threshold})',showinfo",
+        "-an", "-f", "null", "-"
+    ]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        return sorted({float(x) for x in re.findall(r"pts_time:([0-9]+(?:\.[0-9]+)?)", result.stderr)})
+    except Exception as e:
+        print("Scene detection skipped:", e)
+        return []
+
+
+def detect_freeze_intervals(video_path, min_duration=1.5):
+    """Find long frozen/near-duplicate visual intervals."""
+    if not video_path or not os.path.exists(video_path):
+        return []
+    cmd = [
+        "ffmpeg", "-hide_banner", "-i", video_path,
+        "-vf", f"freezedetect=n=-60dB:d={min_duration}",
+        "-an", "-f", "null", "-"
+    ]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        log = result.stderr
+        starts = [float(x) for x in re.findall(r"freeze_start:([0-9]+(?:\.[0-9]+)?)", log)]
+        ends = [float(x) for x in re.findall(r"freeze_end:([0-9]+(?:\.[0-9]+)?)", log)]
+        intervals = []
+        for i, start in enumerate(starts):
+            end = ends[i] if i < len(ends) else None
+            if end is not None and end - start >= min_duration:
+                intervals.append((start, end))
+        return intervals
+    except Exception as e:
+        print("Freeze detection skipped:", e)
+        return []
+
+
+def build_keep_intervals(duration, removed_intervals, min_clip=0.12):
+    """Subtract removed intervals from the source timeline."""
+    if not duration or duration <= 0:
+        return []
+    cursor = 0.0
+    keep = []
+    for start, end in sorted(removed_intervals):
+        start, end = max(0.0, start), min(duration, end)
+        if start > cursor + min_clip:
+            keep.append((cursor, start))
+        cursor = max(cursor, end)
+    if duration > cursor + min_clip:
+        keep.append((cursor, duration))
+    return keep or [(0.0, duration)]
+
+
+def prepare_scene_aware_video(source_video, output_filename="scene_aware_source.mp4"):
+    """Remove long frozen/duplicate-looking intervals and keep A/V aligned.
+
+    Scene timestamps are detected for diagnostics and cut planning. Long freeze
+    intervals are removed; short scene segments are joined with tiny fades.
+    On any failure, the original source is returned safely.
+    """
+    duration = get_video_duration(source_video)
+    if not duration or duration < 2.0:
+        return source_video
+    scene_points = detect_scene_boundaries(source_video)
+    freeze_intervals = detect_freeze_intervals(source_video)
+    print(f"Scene-aware edit: {len(scene_points)} scene changes, {len(freeze_intervals)} freeze intervals")
+    # Do not remove an entire short clip or more than half its content.
+    removed = [(a, b) for a, b in freeze_intervals if b - a >= 1.5 and (b - a) <= duration * 0.5]
+    keep = build_keep_intervals(duration, removed)
+    if len(keep) <= 1:
+        return source_video
+
+    chains = []
+    has_audio = has_audio_stream(source_video)
+    for i, (start, end) in enumerate(keep):
+        seg_dur = max(0.01, end - start)
+        fade_d = min(0.08, seg_dur / 3.0)
+        chains.append(
+            f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS,"
+            f"fade=t=in:st=0:d={fade_d:.3f},fade=t=out:st={max(0.0, seg_dur-fade_d):.3f}:d={fade_d:.3f}[v{i}]"
+        )
+        if has_audio:
+            chains.append(f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{i}]")
+    if has_audio:
+        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(keep)))
+        chains.append(f"{concat_inputs}concat=n={len(keep)}:v=1:a=1[vout][aout]")
+    else:
+        concat_inputs = "".join(f"[v{i}]" for i in range(len(keep)))
+        chains.append(f"{concat_inputs}concat=n={len(keep)}:v=1:a=0[vout]")
+
+    cmd = ["ffmpeg", "-y", "-i", source_video, "-filter_complex", ";".join(chains), "-map", "[vout]"]
+    if has_audio:
+        cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-movflags", "+faststart", output_filename]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=900)
+        return output_filename if os.path.exists(output_filename) else source_video
+    except Exception as e:
+        print("Scene-aware render skipped:", e)
+        return source_video
+
+
 def has_audio_stream(video_path):
     if not video_path or not os.path.exists(video_path):
         return False
@@ -284,7 +391,7 @@ def hex_to_rgba(hex_code, opacity):
 
 def get_tab3_in_video_preview_html(
     sub_lang,
-    ratio, flip_h, scale_val, x_off, y_off,
+    ratio, video_speed, flip_h, scale_val, x_off, y_off,
     crop_w_pct, crop_h_pct,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
@@ -299,6 +406,7 @@ def get_tab3_in_video_preview_html(
         "9:16": {"aspect": "9 / 16", "max_w": "310px"},
     }
     cfg = configs.get(ratio, configs["9:16"])
+    video_speed = max(0.5, min(2.0, float(video_speed or 1.0)))
     flip_x = "-1" if flip_h else "1"
 
     # Percentage offset calculation to stay strictly inside video box
@@ -585,7 +693,7 @@ def hex_to_ass_color(hex_str):
 def render_advanced_clip(
     source_video, tts_audio, srt_path, bgm_audio,
     enable_orig_audio, bgm_volume,
-    ratio_choice, resolution_choice, quality_preset, flip_h, scale_val, x_off, y_off,
+    ratio_choice, resolution_choice, quality_preset, video_speed, flip_h, scale_val, x_off, y_off,
     crop_w_pct, crop_h_pct,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
@@ -620,7 +728,17 @@ def render_advanced_clip(
         "High Quality": {"preset": "slow", "crf": "20"},
         "Best Quality (ဖိုင်ကြီး)": {"preset": "slower", "crf": "18"},
     }.get(quality_preset, {"preset": "medium", "crf": "23"})
+    # Blur is one of the most expensive filters. Keep it visually smooth,
+    # while using a lighter radius for the speed-oriented export preset.
+    blur_radius = 14 if quality_preset == "Fast (သေးငယ်သောဖိုင်)" else 20
+    blur_power = 6 if quality_preset == "Fast (သေးငယ်သောဖိုင်)" else 8
 
+    video_speed = max(0.5, min(2.0, float(video_speed or 1.0)))
+    source_tts_dur = get_video_duration(tts_audio) or 10.0
+    # Speeding/slowing the video also changes narration duration so the
+    # narration, subtitles, and motion remain aligned as one timeline.
+    tts_dur = source_tts_dur / video_speed
+    speed_filter = f"setpts=PTS/{video_speed},"
     flip_filter = "hflip," if flip_h else ""
     crop_filter = f"crop=iw*{crop_w_pct/100.0:.2f}:ih*{crop_h_pct/100.0:.2f},"
     color_filter = f"eq=brightness={bright_val - 1.0:.2f}:contrast={contrast_val:.2f}"
@@ -633,15 +751,15 @@ def render_advanced_clip(
     if use_blur_bg:
         filter_chains.append(
             f"[0:v]split=2[bg_src][fg_src];"
-            f"[bg_src]{flip_filter}{color_filter},scale={tw}:{th}:force_original_aspect_ratio=increase,"
-            f"crop={tw}:{th},boxblur=25:10,eq=brightness=-0.15[bg_blurred];"
-            f"[fg_src]{flip_filter}{crop_filter}{color_filter},"
+            f"[bg_src]{speed_filter}{flip_filter}{color_filter},scale={tw}:{th}:force_original_aspect_ratio=increase,"
+            f"crop={tw}:{th},boxblur={blur_radius}:{blur_power},eq=brightness=-0.15[bg_blurred];"
+            f"[fg_src]{speed_filter}{flip_filter}{crop_filter}{color_filter},"
             f"scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
             f"[bg_blurred][fg_scaled]overlay=(W-w)/2+({x_off}):(H-h)/2+({y_off})[v_base]"
         )
     else:
         filter_chains.append(
-            f"[0:v]{flip_filter}{crop_filter}{color_filter},"
+            f"[0:v]{speed_filter}{flip_filter}{crop_filter}{color_filter},"
             f"scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease,"
             f"pad={tw}:{th}:(ow-iw)/2+({x_off}):(oh-ih)/2+({y_off}):color=0x{bg_clean}[v_base]"
         )
@@ -710,27 +828,31 @@ def render_advanced_clip(
 
     audio_filters = []
     if enable_orig_audio and orig_has_audio:
-        audio_filters.append("[0:a]volume=0.2[orig_a];")
+        audio_filters.append(f"[0:a]atempo={video_speed:.3f},volume=0.2[orig_a];")
     else:
-        audio_filters.append("aevalsrc=0:d=1[orig_a];")
+        # Keep the silent track alive for the complete narration duration;
+        # otherwise amix(duration=first) can cut the output to one second.
+        audio_filters.append(f"aevalsrc=0:d={tts_dur:.3f}[orig_a];")
 
-    audio_filters.append("[1:a]volume=1.0[tts_a];")
+    audio_filters.append(f"[1:a]atempo={video_speed:.3f},volume=1.0[tts_a];")
 
     if audio_inputs_count == 3:
         audio_filters.append(f"[{bgm_idx}:a]volume={bgm_volume}[bgm_a];")
-        audio_filters.append("[orig_a][tts_a][bgm_a]amix=inputs=3:duration=first:dropout_transition=2[aout]")
+        audio_filters.append("[orig_a][tts_a][bgm_a]amix=inputs=3:duration=longest:dropout_transition=2[aout]")
     else:
-        audio_filters.append("[orig_a][tts_a]amix=inputs=2:duration=first:dropout_transition=2[aout]")
+        audio_filters.append("[orig_a][tts_a]amix=inputs=2:duration=longest:dropout_transition=2[aout]")
 
     full_filter_complex = ";".join(filter_chains) + ";" + "".join(audio_filters)
-    tts_dur = get_video_duration(tts_audio) or 10.0
-
     cmd = inputs_cmd + [
         "-filter_complex", full_filter_complex,
         "-map", "[vout]", "-map", "[aout]",
         "-t", str(tts_dur),
+        # Let FFmpeg use all available CPU cores and parallelize the filter graph.
+        "-threads", "0", "-filter_threads", "0", "-filter_complex_threads", "0",
         "-c:v", "libx264", "-preset", quality_settings["preset"], "-crf", quality_settings["crf"], "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:a", "aac", "-b:a", "192k", "-threads", "0",
+        # Makes the exported MP4 start playing while it is downloading.
+        "-movflags", "+faststart", "-map_metadata", "-1",
         output_filename
     ]
 
@@ -804,7 +926,7 @@ def tab3_auto_pipeline(
     voice_lang, voice_label, speed,
     sub_lang,
     enable_orig_audio, bgm_vol,
-    ratio, resolution_choice, quality_preset, flip_h, scale_val, x_off, y_off,
+    ratio, resolution_choice, quality_preset, video_speed, flip_h, scale_val, x_off, y_off,
     crop_w, crop_h,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
@@ -841,12 +963,17 @@ def tab3_auto_pipeline(
             generate_tts_file(narration_script, voice_code, speed, "tab3_voice.mp3")
         )
 
-        audio_dur = get_video_duration(audio_file)
+        audio_dur = (get_video_duration(audio_file) or 10.0) / max(0.5, min(2.0, float(video_speed or 1.0)))
         srt_file, _ = generate_srt_and_zip(subtitle_script, total_target_duration=audio_dur, prefix="tab3_sub")
 
-        # ၄။ Video Render ပြုလုပ်ခြင်း
+        # ၄။ Scene-aware preprocessing: remove long frozen/duplicate-looking
+        # intervals and join the remaining A/V segments smoothly. If FFmpeg
+        # detection fails, the helper safely returns the original source.
+        render_source = prepare_scene_aware_video(target, "scene_aware_source.mp4")
+
+        # ၅။ Video Render ပြုလုပ်ခြင်း
         final_video = render_advanced_clip(
-            source_video=target,
+            source_video=render_source,
             tts_audio=audio_file,
             srt_path=srt_file,
             bgm_audio=bgm_file,
@@ -855,6 +982,7 @@ def tab3_auto_pipeline(
             ratio_choice=ratio,
             resolution_choice=resolution_choice,
             quality_preset=quality_preset,
+            video_speed=video_speed,
             flip_h=flip_h,
             scale_val=scale_val,
             x_off=x_off,
@@ -894,7 +1022,7 @@ def tab3_auto_pipeline(
 # =========================================================
 # GRADIO UI
 # =========================================================
-with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title=APP_TITLE) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}\n**All-in-One Professional Multilingual Movie Recap Studio**")
 
     with gr.Tabs() as main_tabs:
@@ -1002,6 +1130,10 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                                 ["Fast (သေးငယ်သောဖိုင်)", "Balanced (အကြံပြု)", "High Quality", "Best Quality (ဖိုင်ကြီး)"],
                                 value="Balanced (အကြံပြု)", label="🎞️ Video Quality"
                             )
+                        t3_video_speed = gr.Slider(
+                            0.5, 2.0, value=1.0, step=0.05,
+                            label="⏩ Video Speed (0.5× အနှေး — 2.0× အမြန်)"
+                        )
                         with gr.Row():
                             t3_crop_w = gr.Slider(30, 100, value=100, step=1, label="✂️ ဘယ်/ညာ Crop အကျယ် (%)")
                             t3_crop_h = gr.Slider(30, 100, value=100, step=1, label="✂️ အပေါ်/အောက် Crop အမြင့် (%)")
@@ -1046,7 +1178,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         t3_preview_css = gr.HTML(
                             get_tab3_in_video_preview_html(
                                 "မြန်မာ (Burmese)",
-                                "9:16", False, 1.0, 0, 0,
+                                "9:16", 1.0, False, 1.0, 0, 0,
                                 100, 100,
                                 True, "#000000",
                                 1.0, 1.0,
@@ -1091,7 +1223,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
     preview_all_inputs = [
         t3_sub_lang,
-        t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
+        t3_ratio, t3_video_speed, t3_flip, t3_scale, t3_x_off, t3_y_off,
         t3_crop_w, t3_crop_h,
         t3_blur_bg, t3_bgcolor,
         t3_bright, t3_contrast,
@@ -1100,7 +1232,15 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_x, t3_sub_y
     ]
     for comp in preview_all_inputs:
-        comp.change(get_tab3_in_video_preview_html, inputs=preview_all_inputs, outputs=t3_preview_css)
+        if comp is t3_video_speed:
+            comp.change(
+                get_tab3_in_video_preview_html,
+                inputs=preview_all_inputs,
+                outputs=t3_preview_css,
+                js="(...args) => { const v = document.querySelector('#tab3_preview_box video'); if (v) v.playbackRate = Number(args[2] || 1); return args; }"
+            )
+        else:
+            comp.change(get_tab3_in_video_preview_html, inputs=preview_all_inputs, outputs=t3_preview_css)
 
     # Tab 3 - Generate Final One-Clip Video
     t3_run_btn.click(
@@ -1110,7 +1250,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             t3_voice_lang, t3_voice, t3_speed,
             t3_sub_lang,
             t3_orig_audio, t3_bgm_vol,
-            t3_ratio, t3_resolution, t3_quality, t3_flip, t3_scale, t3_x_off, t3_y_off,
+            t3_ratio, t3_resolution, t3_quality, t3_video_speed, t3_flip, t3_scale, t3_x_off, t3_y_off,
             t3_crop_w, t3_crop_h,
             t3_blur_bg, t3_bgcolor,
             t3_bright, t3_contrast,
@@ -1124,4 +1264,4 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 # Render Server Launch Port
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
