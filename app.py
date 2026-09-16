@@ -134,7 +134,53 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO STYLING (Screen အပြည့် ကွက်တိပြသရန်)
+# TRANSLATION ENGINE (ENG, THAI, CHINESE -> BURMESE)
+# =========================================================
+def has_foreign_text(text):
+    if not text:
+        return False
+    # English words, Thai characters (\u0E00-\u0E7F), Chinese characters (\u4E00-\u9FFF) စစ်ဆေးခြင်း
+    if re.search(r"[a-zA-Z]{3,}", text) or re.search(r"[\u0E00-\u0E7F]", text) or re.search(r"[\u4E00-\u9FFF]", text):
+        return True
+    return False
+
+def translate_to_burmese(text):
+    global SAVED_API_KEY
+    if not text or not text.strip():
+        return ""
+    if not SAVED_API_KEY:
+        raise ValueError("Gemini API Key မရှိသေးပါ။ 🔑 API Key Setting ထဲတွင် အရင်ထည့်သွင်းပေးပါ။")
+
+    client = genai.Client(api_key=SAVED_API_KEY)
+    prompt = f"""
+You are an expert translator and movie storyteller.
+Translate the following text (which may be in English, Chinese, Thai, or a mix) into natural, fluent Burmese suitable for Voice-Over Narration and TTS.
+
+[Rules]
+1. Translate into natural, engaging Burmese spoken narration.
+2. Keep the meaning accurate and cinematic.
+3. Remove any timestamps, character tags or brackets.
+4. Output ONLY the translated Burmese text without explanations or headers.
+
+Text to translate:
+{text}
+"""
+    last_error = None
+    for model_name in GEMINI_MODELS:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            if response and response.text:
+                return clean_script_for_tts(response.text)
+        except Exception as e:
+            last_error = e
+            continue
+    raise RuntimeError(f"Translation failed: {last_error}")
+
+# =========================================================
+# DYNAMIC RATIO STYLING
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -172,7 +218,7 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
     """
 
 # =========================================================
-# GEMINI GENERATION
+# GEMINI SCRIPT RECAP CORE
 # =========================================================
 def build_recap_prompt(selected_ratio):
     return f"""
@@ -254,32 +300,51 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
 def tab1_analyze(v_file, v_url, ratio):
     target = v_file if v_file else download_video_from_link(v_url)
     if not target or not os.path.exists(target):
-        return "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
+        return "", "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
     try:
         clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
         srt, zip_f = generate_srt_and_zip(clean_text)
         status = f"✅ Script ရေးသားပြီးပါပြီ! (Model: {model})\n{dur_msg}"
-        return clean_text, status, srt, zip_f
+        return clean_text, clean_text, status, srt, zip_f
     except Exception as e:
-        return "", f"❌ Error: {str(e)}", None, None
+        return "", "", f"❌ Error: {str(e)}", None, None
 
-def tab2_tts(text, voice, speed):
+def handle_direct_translate(text):
+    if not text or not text.strip():
+        return "", "⚠️ ဘာသာပြန်ရန် စာသားထည့်ပေးပါ။"
     try:
-        mp3, srt, zip_f = asyncio.run(generate_myanmar_tts(text, voice, speed, "tab2_output.mp3"))
-        return mp3, mp3, srt, zip_f
+        translated = translate_to_burmese(text)
+        return translated, "✅ မြန်မာဘာသာသို့ အောင်မြင်စွာ ပြန်ဆိုပြီးပါပြီ။"
     except Exception as e:
-        print("Tab 2 Error:", e)
-        return None, None, None, None
+        return text, f"❌ Translation Error: {str(e)}"
+
+def tab2_tts_with_auto_translate(text, voice, speed):
+    current_text = text
+    trans_note = ""
+    # Foreign Text (Eng/Thai/Chinese) ပါဝင်နေပါက အလိုအလျောက် မြန်မာလို အရင်ပြန်ဆိုပေးခြင်း
+    if has_foreign_text(current_text):
+        try:
+            current_text = translate_to_burmese(current_text)
+            trans_note = " (အလိုအလျောက် မြန်မာပြန်ဆိုထားပါသည်)"
+        except Exception as e:
+            print("Auto Translate Error:", e)
+
+    try:
+        mp3, srt, zip_f = asyncio.run(generate_myanmar_tts(current_text, voice, speed, "tab2_output.mp3"))
+        status_msg = f"✅ အသံဖိုင် ဖန်တီးပြီးပါပြီ!{trans_note}"
+        return current_text, mp3, mp3, srt, zip_f, status_msg
+    except Exception as e:
+        return current_text, None, None, None, None, f"❌ Error: {str(e)}"
 
 # =========================================================
 # GRADIO UI
 # =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Myanmar Voice-Over**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Natural Myanmar TTS Studio**")
 
-    with gr.Tabs():
+    with gr.Tabs() as main_tabs:
         # --- API KEY TAB ---
-        with gr.TabItem("🔑 API Key Setting"):
+        with gr.TabItem("🔑 API Key Setting", id="tab_key"):
             gr.Markdown("### 🔐 Gemini API Key ထည့်သွင်းပါ")
             api_key_input = gr.Textbox(label="Gemini API Key", type="password", placeholder="AIzaSy...")
             save_key_btn = gr.Button("💾 API Key သိမ်းမည်", variant="primary")
@@ -287,7 +352,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             save_key_btn.click(save_api_key, inputs=api_key_input, outputs=key_status)
 
         # --- TAB 1: SCRIPT ---
-        with gr.TabItem("1️⃣ Video Analysis & Script"):
+        with gr.TabItem("1️⃣ Video Analysis & Script", id="tab_script"):
             with gr.Row():
                 with gr.Column(scale=1):
                     v1_file = gr.Video(label="📹 Video File တင်ရန်")
@@ -302,24 +367,30 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
+                    go_to_tts_btn = gr.Button("🎙️ Tab 2 (TTS) သို့ သွားရောက် အသံထုတ်မည် ➡️", variant="secondary")
 
             with gr.Row():
                 v1_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
                 v1_zip = gr.File(label="📦 SRT ZIP ဒေါင်းလုဒ်")
 
-            v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
-            v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
-            v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
-            v1_gen_btn.click(tab1_analyze, inputs=[v1_file, v1_url, v1_ratio], outputs=[v1_script_out, v1_status, v1_srt, v1_zip])
-
         # --- TAB 2: TTS ---
-        with gr.TabItem("2️⃣ Text-to-Speech"):
+        with gr.TabItem("2️⃣ Text-to-Speech", id="tab_tts"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    v2_input_text = gr.Textbox(label="🎙️ Burmese Script ထည့်ပါ", lines=12)
+                    v2_input_text = gr.Textbox(
+                        label="🎙️ Burmese Script (English, Thai, 中文 စာသားများ ထည့်ပါက အလိုအလျောက် မြန်မာပြန်ပေးပါမည်)", 
+                        lines=12,
+                        placeholder="မြန်မာစာ သို့မဟုတ် အင်္ဂလိပ်၊ ထိုင်း၊ တရုတ် စာသားများ ထည့်သွင်းနိုင်ပါသည်..."
+                    )
+                    
+                    with gr.Row():
+                        v2_trans_btn = gr.Button("🌐 မြန်မာလို ပြန်ဆိုမည် (Eng/Thai/中文 → မြန်မာ)", variant="secondary")
+                    
                     v2_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 အသံ ရွေးချယ်ပါ")
                     v2_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Speed (%)")
                     v2_btn = gr.Button("⚡ မြန်မာအသံဖိုင် ဖန်တီးမည်", variant="primary")
+                    v2_status = gr.Markdown("")
+
                 with gr.Column(scale=1):
                     v2_audio = gr.Audio(label="🔊 Voice Preview (အသံစမ်းနားထောင်ရန်)", autoplay=True)
                     v2_mp3 = gr.File(label="🎵 MP3 ဖိုင် ဒေါင်းလုဒ်")
@@ -327,9 +398,35 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v2_srt = gr.File(label="📄 SRT")
                 v2_zip = gr.File(label="📦 SRT ZIP")
 
-            v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
+    # ================= EVENT BINDINGS =================
+    v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
+    v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
+    v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
+    
+    # Script ထွက်သည်နှင့် Tab 2 ၏ Textbox ထဲ အလိုအလျောက် ပို့ပေးခြင်း
+    v1_gen_btn.click(
+        tab1_analyze, 
+        inputs=[v1_file, v1_url, v1_ratio], 
+        outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
+    )
 
-# Render Server Launch Port
+    go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
+
+    # ဘာသာပြန်ခလုတ် နှိပ်ပါက မြန်မာလို တန်းပြောင်းပေးခြင်း
+    v2_trans_btn.click(
+        handle_direct_translate,
+        inputs=v2_input_text,
+        outputs=[v2_input_text, v2_status]
+    )
+
+    # အသံဖိုင်ထုတ်လုပ်ခြင်း (နိုင်ငံခြားစာဖြစ်နေပါက မြန်မာလို အလိုအလျောက် ပြန်ဆိုပြီး အသံထုတ်ပေးခြင်း)
+    v2_btn.click(
+        tab2_tts_with_auto_translate, 
+        inputs=[v2_input_text, v2_voice, v2_speed], 
+        outputs=[v2_input_text, v2_audio, v2_mp3, v2_srt, v2_zip, v2_status]
+    )
+
+# Render Server Port
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
