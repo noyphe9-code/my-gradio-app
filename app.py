@@ -17,14 +17,12 @@ APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.1-flash-lite",
 ]
 
-# ဘာသာစကားအလိုက် ရွေးချယ်နိုင်သော အသံများ
 VOICES_BY_LANG = {
     "မြန်မာ (Burmese Voice)": {
         "Thiha (အမျိုးသားအသံ) - Natural": "my-MM-ThihaNeural",
@@ -188,7 +186,7 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# TRANSLATION ENGINE (ENG, THAI, CHINESE -> BURMESE)
+# TRANSLATION ENGINE
 # =========================================================
 def has_foreign_text(text):
     if not text:
@@ -207,9 +205,9 @@ def translate_to_target_language(text, target_lang):
     client = genai.Client(api_key=SAVED_API_KEY)
     prompt = f"""
 You are an expert movie subtitle translator.
-Translate the following movie narration lines into {target_lang} for subtitles.
-Keep each line concise, natural, and accurately mapped line-by-line.
-Output ONLY the translated lines without commentary or markdown ticks.
+Translate the following movie narration lines into {target_lang} for 2-line subtitles.
+Keep each line concise, natural, and grammatically accurate.
+Output ONLY the translated lines without any markdown formatting or commentary.
 
 Text:
 {text}
@@ -227,7 +225,7 @@ Text:
     return text
 
 # =========================================================
-# CSS STYLING & REAL-TIME PREVIEW ENGINE
+# CSS & REAL-TIME PREVIEW ENGINE (OVERLAY FIXED)
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -243,7 +241,6 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
         width: 100% !important;
         max-width: {cfg["max_w"]} !important;
         margin: 0 auto !important;
-        transition: all 0.3s ease-in-out !important;
     }}
     #{container_id} .video-container {{
         width: 100% !important;
@@ -252,7 +249,6 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
         background: #000 !important;
         border-radius: 12px !important;
         overflow: hidden !important;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
     }}
     #{container_id} video {{
         width: 100% !important;
@@ -275,43 +271,46 @@ def hex_to_rgba(hex_code, opacity):
 
 def get_tab3_full_preview_html(
     sub_lang,
-    ratio, flip_h, scale_val, x_off, y_off, use_blur_bg, bg_color,
+    ratio, flip_h, scale_val, x_off, y_off,
+    crop_w_pct, crop_h_pct,
+    use_blur_bg, bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
     logo_file, logo_size, logo_x, logo_y,
     font_family, font_size, font_color, outline_color, sub_x, sub_y
 ):
     configs = {
-        "1:1": {"aspect": "1 / 1", "max_w": "420px"},
+        "1:1": {"aspect": "1 / 1", "max_w": "400px"},
         "3:4": {"aspect": "3 / 4", "max_w": "360px"},
-        "16:9": {"aspect": "16 / 9", "max_w": "580px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "560px"},
         "9:16": {"aspect": "9 / 16", "max_w": "320px"},
     }
     cfg = configs.get(ratio, configs["9:16"])
     flip_x = "-1" if flip_h else "1"
 
-    # Mask Style
+    # Mask Overlay (Relative to Video Container Center)
     mask_html = ""
     if mask_enable:
         mask_bg = hex_to_rgba(mask_color, mask_opacity)
-        mask_backdrop = "backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);" if mask_type == "Blur (ဝေဝါးဖုံး)" else ""
+        mask_backdrop = "backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);" if mask_type == "Blur (ဝေဝါးဖုံး)" else ""
         mask_html = f"""
         <div style="
             position: absolute;
             left: calc(50% + {mask_x}px);
-            bottom: calc(20% + {mask_y}px);
-            transform: translateX(-50%);
+            top: calc(50% - {mask_y}px);
+            transform: translate(-50%, -50%);
             width: {mask_w}%;
             height: {mask_h}px;
             background: {mask_bg};
             {mask_backdrop}
             border-radius: 6px;
-            z-index: 10;
+            z-index: 25;
             pointer-events: none;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
         "></div>
         """
 
-    # Logo Style
+    # Logo Overlay
     logo_html = ""
     if logo_file:
         try:
@@ -323,18 +322,18 @@ def get_tab3_full_preview_html(
                 <img src="{logo_src}" style="
                     position: absolute;
                     left: calc(50% + {logo_x}px);
-                    top: calc(15% + {logo_y}px);
+                    top: calc(50% - {logo_y}px);
                     transform: translate(-50%, -50%);
                     width: {logo_size}px;
                     height: auto;
-                    z-index: 20;
+                    z-index: 30;
                     pointer-events: none;
                 "/>
                 """
         except Exception:
             pass
 
-    # Language Sample Lines according to sub_lang selection
+    # Subtitle Text Preview
     if sub_lang == "English":
         sample_l1 = "A man standing on the mountain"
         sample_l2 = "( Sample English Subtitle )"
@@ -352,11 +351,11 @@ def get_tab3_full_preview_html(
     <div style="
         position: absolute;
         left: calc(50% + {sub_x}px);
-        bottom: calc(15% + {sub_y}px);
-        transform: translateX(-50%);
-        width: 90%;
+        top: calc(50% - {sub_y}px);
+        transform: translate(-50%, -50%);
+        width: 95%;
         text-align: center;
-        z-index: 30;
+        z-index: 35;
         pointer-events: none;
     ">
         <span style="
@@ -390,6 +389,11 @@ def get_tab3_full_preview_html(
     </div>
     """
 
+    # Video Clip-path for Crop preview
+    inset_x = (100 - crop_w_pct) / 2
+    inset_y = (100 - crop_h_pct) / 2
+    clip_style = f"clip-path: inset({inset_y:.1f}% {inset_x:.1f}% {inset_y:.1f}% {inset_x:.1f}%);"
+
     return f"""
     <style id="tab3-live-preview-style">
     #tab3_preview_box {{
@@ -415,15 +419,30 @@ def get_tab3_full_preview_html(
         object-fit: contain !important;
         transform: scale({scale_val}) scaleX({flip_x}) translate({x_off}px, {y_off}px) !important;
         filter: brightness({bright_val}) contrast({contrast_val}) !important;
+        {clip_style}
         display: block !important;
         position: relative !important;
-        z-index: 2 !important;
-        transition: transform 0.2s ease-out;
+        z-index: 5 !important;
+        transition: transform 0.15s ease-out;
+    }}
+    #tab3_preview_box .video-container::after {{
+        content: "";
+        display: block;
     }}
     </style>
-    {mask_html}
-    {logo_html}
-    {sub_html}
+    <div id="tab3_interactive_overlay" style="
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        width: 100%; height: 100%;
+        overflow: hidden;
+        border-radius: 14px;
+        pointer-events: none;
+        z-index: 20;
+    ">
+        {mask_html}
+        {logo_html}
+        {sub_html}
+    </div>
     """
 
 # =========================================================
@@ -432,7 +451,7 @@ def get_tab3_full_preview_html(
 def build_recap_prompt(selected_ratio, voice_language, video_duration=None):
     dur_guidance = ""
     if video_duration:
-        dur_guidance = f"\nVideo Length: {video_duration:.1f} seconds. Keep the recap pacing perfectly aligned with this duration."
+        dur_guidance = f"\nVideo Length: {video_duration:.1f} seconds. Keep the recap length strictly balanced."
 
     lang_instructions = {
         "မြန်မာ (Burmese Voice)": "မြန်မာ Movie Recap Script အဖြစ် မြန်မာစာလုံးပေါင်း သတ်ပုံတိကျစွာ သဘာဝကျကျ ရေးသားပေးပါ။",
@@ -450,9 +469,9 @@ Target Narration Voice Language = {voice_language}
 
 Instructions:
 1. {instruction}
-2. Accurately describe what actually happens in the video, capturing character actions and dialog.
-3. Do NOT include any technical labels like [Visual], [Scene], [Narrator], [Dialogue], or timestamps.
-4. Keep each line clear and rhythmic for natural TTS audio synthesis and subtitle synchronization.
+2. Accurately capture what happens in the video with fluent storytelling.
+3. Do NOT include any technical tags like [Visual], [Scene], [Narrator], [Dialogue], or timestamps.
+4. Keep sentences rhythmic and concise for smooth TTS synthesis.
 """
 
 def generate_with_retry(client, uploaded_file, prompt):
@@ -516,7 +535,7 @@ async def generate_tts_file(text, voice_code, speed_percent, output_name="output
     return output_name
 
 # =========================================================
-# ADVANCED FFMPEG COMPOSER
+# ADVANCED FFMPEG COMPOSER (FIXED EXIT STATUS 234)
 # =========================================================
 def hex_to_ass_color(hex_str):
     hex_str = hex_str.lstrip("#")
@@ -529,6 +548,7 @@ def render_advanced_clip(
     source_video, tts_audio, srt_path, bgm_audio,
     enable_orig_audio, bgm_volume,
     ratio_choice, flip_h, scale_val, x_off, y_off,
+    crop_w_pct, crop_h_pct,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
@@ -544,7 +564,9 @@ def render_advanced_clip(
     }
     tw, th = ratio_dims.get(ratio_choice, (1080, 1920))
 
+    # Base Filters (Flip + Crop + Color Adjustment)
     flip_filter = "hflip," if flip_h else ""
+    crop_filter = f"crop=iw*{crop_w_pct/100.0:.2f}:ih*{crop_h_pct/100.0:.2f},"
     color_filter = f"eq=brightness={bright_val - 1.0:.2f}:contrast={contrast_val:.2f}"
     bg_clean = bg_color.lstrip("#")
 
@@ -552,25 +574,25 @@ def render_advanced_clip(
 
     if use_blur_bg:
         filter_chains.append(
-            f"[0:v]{flip_filter}{color_filter},split=2[fg_raw][bg_raw];"
-            f"[bg_raw]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},boxblur=25:10,eq=brightness=-0.1[bg_blurred];"
+            f"[0:v]{flip_filter}{crop_filter}{color_filter},split=2[fg_raw][bg_raw];"
+            f"[bg_raw]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},boxblur=25:10,eq=brightness=-0.15[bg_blurred];"
             f"[fg_raw]scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
             f"[bg_blurred][fg_scaled]overlay=(W-w)/2+({x_off}):(H-h)/2+({y_off})[v_base]"
         )
     else:
         filter_chains.append(
-            f"[0:v]{flip_filter}{color_filter},scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease,"
-            f"pad={tw}:{th}:({tw}-iw)/2+({x_off}):({th}-ih)/2+({y_off}):color=0x{bg_clean}[v_base]"
+            f"[0:v]{flip_filter}{crop_filter}{color_filter},scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease,"
+            f"pad={tw}:{th}:(ow-iw)/2+({x_off}):(oh-ih)/2+({y_off}):color=0x{bg_clean}[v_base]"
         )
 
     current_v = "v_base"
 
-    # Mask to cover original subtitles
+    # Mask to cover original subtitles (Centered coordinates matching Preview)
     if mask_enable:
         mw = int(tw * (mask_w / 100.0))
         mh = int(mask_h * (th / 1920.0 * 2.0))
         mx = f"(W-{mw})/2+({mask_x})"
-        my = f"H*0.8-({mask_y})"
+        my = f"(H-{mh})/2-({mask_y})"
 
         if mask_type == "Blur (ဝေဝါးဖုံး)":
             filter_chains.append(
@@ -595,18 +617,20 @@ def render_advanced_clip(
         logo_idx = next_input_idx
         next_input_idx += 1
         lx = f"(W-w)/2+({logo_x})"
-        ly = f"H*0.15+({logo_y})"
+        ly = f"(H-h)/2-({logo_y})"
         filter_chains.append(
             f"[{logo_idx}:v]scale={logo_size}:-1[scaled_logo];"
             f"[{current_v}][scaled_logo]overlay={lx}:{ly}[v_logoed]"
         )
         current_v = "v_logoed"
 
-    # Subtitles
+    # Burn-in Subtitles with Exact Positioning (Alignment 5 = Center)
     primary_ass = hex_to_ass_color(font_color)
     outline_ass = hex_to_ass_color(outline_color)
-    calc_margin_v = max(10, int(150 - sub_y))
     escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
+    
+    # MarginV for ASS subtitle positioning
+    calc_margin_v = max(10, int((th / 2) - sub_y))
     sub_style = (
         f"subtitles='{escaped_srt}':force_style="
         f"'FontName={font_family},FontSize={font_size},"
@@ -615,7 +639,7 @@ def render_advanced_clip(
     )
     filter_chains.append(f"[{current_v}]{sub_style}[vout]")
 
-    # Audio Mixing
+    # Audio Mixing Configuration
     audio_inputs_count = 2
     if bgm_audio and os.path.exists(bgm_audio):
         inputs_cmd.extend(["-stream_loop", "-1", "-i", bgm_audio])
@@ -650,13 +674,14 @@ def render_advanced_clip(
     ]
 
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except Exception as e:
-        print("Complex Render Failed, fallback to standard:", e)
-        clean_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(OW-IW)/2:(OH-IH)/2"
+        proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except subprocess.CalledProcessError as e:
+        print("FFmpeg Full Render Error Log:\n", e.stderr)
+        # Safe Fallback to prevent crash (Exit status 234 fixed)
+        fallback_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2"
         fb_cmd = [
             "ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio,
-            "-vf", clean_vf,
+            "-vf", fallback_vf,
             "-map", "0:v:0", "-map", "1:a:0",
             "-t", str(tts_dur),
             "-c:v", "libx264", "-preset", "fast", "-c:a", "aac",
@@ -720,6 +745,7 @@ def tab3_auto_pipeline(
     sub_lang,
     enable_orig_audio, bgm_vol,
     ratio, flip_h, scale_val, x_off, y_off,
+    crop_w, crop_h,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
@@ -734,7 +760,7 @@ def tab3_auto_pipeline(
         # ၁။ ရွေးချယ်ထားသော အသံဘာသာစကားဖြင့် Script ရေးသားခြင်း
         narration_script, model, dur_msg = run_gemini_video_analysis(target, ratio, voice_lang)
         
-        # ၂။ စာတန်းထိုး ဘာသာစကားအတွက် သီးသန့် ဘာသာပြန်ခြင်း (အသံနှင့် စာတန်းထိုး မတူပါက)
+        # ၂။ စာတန်းထိုးအတွက် ဘာသာပြန်ခြင်း
         subtitle_script = narration_script
         need_sub_trans = False
         if "Burmese" in voice_lang and sub_lang != "မြန်မာ (Burmese)":
@@ -749,7 +775,7 @@ def tab3_auto_pipeline(
         if need_sub_trans:
             subtitle_script = translate_to_target_language(narration_script, sub_lang)
 
-        # ၃။ ရွေးချယ်ထားသော အသံ (ဥပမာ- မြန်မာအသံ) ဖြင့် MP3 ထုတ်လုပ်ခြင်း
+        # ၃။ အသံဖိုင်နှင့် စာတန်းထိုး ဖန်တီးခြင်း
         voice_code = VOICES_BY_LANG[voice_lang].get(voice_label, list(VOICES_BY_LANG[voice_lang].values())[0])
         audio_file = asyncio.run(
             generate_tts_file(narration_script, voice_code, speed, "tab3_voice.mp3")
@@ -758,7 +784,7 @@ def tab3_auto_pipeline(
         audio_dur = get_video_duration(audio_file)
         srt_file, _ = generate_srt_and_zip(subtitle_script, total_target_duration=audio_dur, prefix="tab3_sub")
 
-        # ၄။ Video + Mask + Logo + Custom Language Subtitle ပေါင်းစပ်ပြီး အပြီးစီး ထုတ်ခြင်း
+        # ၄။ Video Render ပြုလုပ်ခြင်း
         final_video = render_advanced_clip(
             source_video=target,
             tts_audio=audio_file,
@@ -771,6 +797,8 @@ def tab3_auto_pipeline(
             scale_val=scale_val,
             x_off=x_off,
             y_off=y_off,
+            crop_w_pct=crop_w,
+            crop_h_pct=crop_h,
             use_blur_bg=use_blur_bg,
             bg_color=bg_color,
             bright_val=bright_val,
@@ -861,7 +889,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
         # --- TAB 3: ONE-CLICK ADVANCED MULTILINGUAL STUDIO ---
         with gr.TabItem("⚡ 3️⃣ One-Click All-in-One Video Studio", id="tab_auto"):
-            gr.Markdown("### 🎛️ မြန်မာအသံ + Eng/Thai/တရုတ် စာတန်းထိုး သီးခြားစိတ်ကြိုက်ရွေးချယ်နိုင်သော One-Click Studio")
+            gr.Markdown("### 🎛️ Video Crop, Extended Range Mask & Positioning Studio")
             
             with gr.Row():
                 # LEFT COLUMN: SETTINGS
@@ -870,7 +898,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_url = gr.Textbox(label="🔗 Video Link (YouTube, TikTok, Facebook, RedNote စသည်)")
                     t3_load_btn = gr.Button("🔍 Video ရယူ/စစ်ဆေးမည်", variant="secondary")
 
-                    with gr.Accordion("🎤 အသံပိုင်းဆိုင်ရာ & Voice ဘာသာစကား", open=True):
+                    with gr.Accordion("🎤 အသံပိုင်းဆိုင်ရာ & Voice ဘာသာစကား", open=False):
                         t3_voice_lang = gr.Radio(
                             list(VOICES_BY_LANG.keys()), 
                             value="မြန်မာ (Burmese Voice)", 
@@ -886,53 +914,56 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         t3_bgm_file = gr.Audio(label="🎵 Background Music (BGM) ထည့်ရန်", type="filepath")
                         t3_bgm_vol = gr.Slider(0.0, 1.0, value=0.15, step=0.05, label="🎚️ BGM အသံအတိုး/အလျှော့ (Volume)")
 
-                    with gr.Accordion("✍️ စာတန်းထိုး ဘာသာစကား (Eng / Thai / တရုတ် / မြန်မာ)", open=True):
+                    with gr.Accordion("✍️ စာတန်းထိုး ဘာသာစကား & နေရာဆွဲရွှေ့ခြင်း (အပေါ်အောက် အဆုံးထိရွှေ့နိုင်သည်)", open=True):
                         t3_sub_lang = gr.Radio(
                             SUBTITLE_LANG_CHOICES, 
-                            value="English", 
-                            label="📝 Video ပေါ်တွင် ထိုးမည့် စာတန်းထိုး ဘာသာစကား (Subtitle Language)"
+                            value="မြန်မာ (Burmese)", 
+                            label="📝 စာတန်းထိုး ဘာသာစကား"
                         )
                         t3_font = gr.Dropdown(["Pyidaungsu", "Padauk", "Myanmar Text", "Arial", "sans-serif"], value="Pyidaungsu", label="🔤 Font ဒီဇိုင်း")
-                        t3_fsize = gr.Slider(14, 42, value=22, step=1, label="📏 စာလုံး အရွယ်အစား")
+                        t3_fsize = gr.Slider(14, 48, value=22, step=1, label="📏 စာလုံး အရွယ်အစား")
                         with gr.Row():
                             t3_fcolor = gr.ColorPicker(label="🎨 စာလုံးအရောင်", value="#00E676")
                             t3_ocolor = gr.ColorPicker(label="🖌️ အနားသတ် အကြမ်းရောင် (Outline)", value="#000000")
                         with gr.Row():
-                            t3_sub_x = gr.Slider(-200, 200, value=0, step=5, label="↔️ စာတန်းထိုး ဘယ်/ညာ ရွှေ့မည်")
-                            t3_sub_y = gr.Slider(-200, 200, value=0, step=5, label="↕️ စာတန်းထိုး အပေါ်/အောက် ရွှေ့မည်")
+                            t3_sub_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ စာတန်းထိုး ဘယ်/ညာ ရွှေ့မည်")
+                            t3_sub_y = gr.Slider(-750, 750, value=-260, step=5, label="↕️ စာတန်းထိုး အပေါ်/အောက် ရွှေ့မည် (အဆုံးထိရွှေ့နိုင်)")
 
-                    with gr.Accordion("📐 Video ပုံစံ၊ အရွယ်အစားနှင့် အလင်းအမှောင် Filter", open=True):
+                    with gr.Accordion("✂️ Video Crop (အတိုး/အလျော့ဖြတ်တောက်မှု) & ပုံစံ", open=True):
                         t3_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="9:16", label="📐 Aspect Ratio ရွေးပါ")
-                        t3_blur_bg = gr.Checkbox(label="🌫️ Background Blur (ဝေဝါးသော နောက်ခံ) အသုံးပြုမည်", value=True)
+                        with gr.Row():
+                            t3_crop_w = gr.Slider(30, 100, value=100, step=1, label="✂️ ဘယ်/ညာ Crop အကျယ် (%)")
+                            t3_crop_h = gr.Slider(30, 100, value=100, step=1, label="✂️ အပေါ်/အောက် Crop အမြင့် (%)")
+                        t3_scale = gr.Slider(0.5, 2.5, value=1.0, step=0.05, label="🔍 Video Zoom အကြီး/အသေး")
                         t3_flip = gr.Checkbox(label="🔄 ဗီဒီယို ဘယ်ညာလှန်မည် (Horizontal Flip)", value=False)
-                        t3_scale = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="🔍 Video အကြီး/အသေး (Scale/Zoom)")
                         with gr.Row():
-                            t3_x_off = gr.Slider(-200, 200, value=0, step=5, label="↔️ ဘယ်/ညာ ရွှေ့မည် (X-Offset)")
-                            t3_y_off = gr.Slider(-200, 200, value=0, step=5, label="↕️ အပေါ်/အောက် ရွှေ့မည် (Y-Offset)")
+                            t3_x_off = gr.Slider(-500, 500, value=0, step=5, label="↔️ Video ဘယ်/ညာ ရွှေ့မည်")
+                            t3_y_off = gr.Slider(-500, 500, value=0, step=5, label="↕️ Video အပေါ်/အောက် ရွှေ့မည်")
+                        t3_blur_bg = gr.Checkbox(label="🌫️ Background Blur (ဝေဝါးသော နောက်ခံ) အသုံးပြုမည်", value=True)
                         with gr.Row():
-                            t3_bright = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="☀️ အလင်းအမှောင် (Brightness)")
-                            t3_contrast = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="🌓 အနုအရင့် (Contrast)")
-                        t3_bgcolor = gr.ColorPicker(label="🎨 Background အရောင် (Blur ပိတ်ထားပါက အသုံးပြုရန်)", value="#000000")
+                            t3_bright = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="☀️ Brightness (အလင်း/အမှောင်)")
+                            t3_contrast = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="🌓 Contrast (အနု/အရင့်)")
+                        t3_bgcolor = gr.ColorPicker(label="🎨 Canvas အရောင် (Blur ပိတ်ထားပါက)", value="#000000")
 
-                    with gr.Accordion("🛡️ မူရင်းစာတန်းထိုး ဖုံးအုပ်မည့် Mask (Blur / Color Box)", open=False):
+                    with gr.Accordion("🛡️ မူရင်းစာတန်းထိုး ဖုံးအုပ်မည့် Mask (အပေါ်အောက် အဆုံးထိရွှေ့နိုင်သည်)", open=True):
                         t3_mask_enable = gr.Checkbox(label="✅ စာတန်းထိုး ဖုံးအုပ်မည့် Mask ဖွင့်မည်", value=True)
                         t3_mask_type = gr.Radio(["Blur (ဝေဝါးဖုံး)", "Color Box (အရောင်အတုံးဖြင့်ဖုံး)"], value="Blur (ဝေဝါးဖုံး)", label="🎭 Mask ပုံစံ")
                         with gr.Row():
                             t3_mask_color = gr.ColorPicker(label="🎨 Mask အရောင်", value="#000000")
                             t3_mask_opacity = gr.Slider(0.0, 1.0, value=0.85, step=0.05, label="💧 Opacity (အရောင် အတိုး/အလျှော့)")
                         with gr.Row():
-                            t3_mask_w = gr.Slider(20, 100, value=85, step=1, label="↔️ Mask အကျယ် (%)")
-                            t3_mask_h = gr.Slider(20, 200, value=75, step=2, label="↕️ Mask အမြင့် (px)")
+                            t3_mask_w = gr.Slider(10, 100, value=85, step=1, label="↔️ Mask အကျယ် (%)")
+                            t3_mask_h = gr.Slider(10, 300, value=85, step=2, label="↕️ Mask အမြင့် (px)")
                         with gr.Row():
-                            t3_mask_x = gr.Slider(-200, 200, value=0, step=5, label="↔️ Mask ဘယ်/ညာ ရွှေ့မည်")
-                            t3_mask_y = gr.Slider(-200, 200, value=0, step=5, label="↕️ Mask အပေါ်/အောက် ရွှေ့မည်")
+                            t3_mask_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ Mask ဘယ်/ညာ ရွှေ့မည်")
+                            t3_mask_y = gr.Slider(-750, 750, value=-260, step=5, label="↕️ Mask အပေါ်/အောက် ရွှေ့မည် (အဆုံးထိရွှေ့နိုင်)")
 
                     with gr.Accordion("🏷️ Logo တံဆိပ် ထည့်သွင်းခြင်း", open=False):
                         t3_logo_file = gr.Image(label="🖼️ Logo ပုံတင်ရန် (PNG / JPG)", type="filepath")
-                        t3_logo_size = gr.Slider(40, 300, value=100, step=5, label="📏 Logo အရွယ်အစား (px)")
+                        t3_logo_size = gr.Slider(30, 400, value=100, step=5, label="📏 Logo အရွယ်အစား (px)")
                         with gr.Row():
-                            t3_logo_x = gr.Slider(-300, 300, value=0, step=5, label="↔️ Logo ဘယ်/ညာ ရွှေ့မည်")
-                            t3_logo_y = gr.Slider(-300, 300, value=0, step=5, label="↕️ Logo အပေါ်/အောက် ရွှေ့မည်")
+                            t3_logo_x = gr.Slider(-500, 500, value=0, step=5, label="↔️ Logo ဘယ်/ညာ ရွှေ့မည်")
+                            t3_logo_y = gr.Slider(-750, 750, value=300, step=5, label="↕️ Logo အပေါ်/အောက် ရွှေ့မည်")
 
                     t3_run_btn = gr.Button("✨ Video အပြီးစီး One-Click ထုတ်လုပ်မည်", variant="primary", size="lg")
 
@@ -940,16 +971,18 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 with gr.Column(scale=1):
                     t3_preview_css = gr.HTML(
                         get_tab3_full_preview_html(
-                            "English",
-                            "9:16", False, 1.0, 0, 0, True, "#000000",
+                            "မြန်မာ (Burmese)",
+                            "9:16", False, 1.0, 0, 0,
+                            100, 100,
+                            True, "#000000",
                             1.0, 1.0,
-                            True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 75, 0, 0,
-                            None, 100, 0, 0,
-                            "Pyidaungsu", 22, "#00E676", "#000000", 0, 0
+                            True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 85, 0, -260,
+                            None, 100, 0, 300,
+                            "Pyidaungsu", 22, "#00E676", "#000000", 0, -260
                         )
                     )
-                    t3_live_video = gr.Video(label="📺 Real-Time Preview (ရွေးချယ်ထားသော စာတန်းထိုး နမူနာ)", elem_id="tab3_preview_box")
-                    t3_status = gr.Markdown("အသံကို မြန်မာ ထားပြီး စာတန်းထိုးကို Eng/Thai/တရုတ် စိတ်ကြိုက်ရွေးချယ်နိုင်ပါသည်။")
+                    t3_live_video = gr.Video(label="📺 Real-Time Preview (Preview ဘောင်အတွင်း ကွက်တိပြသမှု)", elem_id="tab3_preview_box")
+                    t3_status = gr.Markdown("စာတန်းထိုးနှင့် Mask များကို Preview Video ဘောင်အတွင်း အပေါ်အောက် အဆုံးထိ စိတ်ကြိုက်ဆွဲရွှေ့နိုင်ပါသည်။")
                     t3_final_video = gr.Video(label="🎬 အပြီးစီး Final Video Output (Playable)")
                     t3_script_view = gr.Textbox(label="📝 ထွက်ရှိလာသော စာတန်းထိုး Script", lines=5)
                     with gr.Row():
@@ -976,7 +1009,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         outputs=[v2_input_text, v2_audio, v2_mp3, v2_srt, v2_zip, v2_status]
     )
 
-    # Tab 3 - Voice Language Change -> Update Voice Choices
+    # Tab 3 - Voice Selection
     t3_voice_lang.change(update_voice_choices, inputs=t3_voice_lang, outputs=t3_voice)
 
     # Tab 3 - Real-Time Preview Updates
@@ -985,7 +1018,9 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
     preview_all_inputs = [
         t3_sub_lang,
-        t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off, t3_blur_bg, t3_bgcolor,
+        t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
+        t3_crop_w, t3_crop_h,
+        t3_blur_bg, t3_bgcolor,
         t3_bright, t3_contrast,
         t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
         t3_logo_file, t3_logo_size, t3_logo_x, t3_logo_y,
@@ -1003,6 +1038,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             t3_sub_lang,
             t3_orig_audio, t3_bgm_vol,
             t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
+            t3_crop_w, t3_crop_h,
             t3_blur_bg, t3_bgcolor,
             t3_bright, t3_contrast,
             t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
