@@ -68,6 +68,19 @@ def get_video_duration(video_path):
         print("Duration Error:", e)
     return None
 
+def has_audio_stream(video_path):
+    """ဗီဒီယိုထဲတွင် အသံပါမပါ စစ်ဆေးခြင်း (Silent Video Error ကာကွယ်ရန်)"""
+    if not video_path or not os.path.exists(video_path):
+        return False
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15
+        )
+        return "audio" in result.stdout.lower()
+    except Exception:
+        return False
+
 def validate_video_duration(video_path):
     duration = get_video_duration(video_path)
     if duration is None:
@@ -170,6 +183,7 @@ def download_video_from_link(link):
         "noplaylist": True,
         "overwrites": True,
         "merge_output_format": "mp4",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -206,7 +220,7 @@ def translate_to_target_language(text, target_lang):
     prompt = f"""
 You are an expert movie subtitle translator.
 Translate the following movie narration lines into {target_lang} for 2-line subtitles.
-Keep each line concise, natural, and grammatically accurate.
+Keep each line concise, natural, and accurately mapped.
 Output ONLY the translated lines without any markdown formatting or commentary.
 
 Text:
@@ -225,7 +239,7 @@ Text:
     return text
 
 # =========================================================
-# CSS & REAL-TIME PREVIEW ENGINE (OVERLAY FIXED)
+# CSS & REAL-TIME PREVIEW ENGINE
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -288,7 +302,7 @@ def get_tab3_full_preview_html(
     cfg = configs.get(ratio, configs["9:16"])
     flip_x = "-1" if flip_h else "1"
 
-    # Mask Overlay (Relative to Video Container Center)
+    # Mask Overlay (Relative to Video Container)
     mask_html = ""
     if mask_enable:
         mask_bg = hex_to_rgba(mask_color, mask_opacity)
@@ -333,7 +347,7 @@ def get_tab3_full_preview_html(
         except Exception:
             pass
 
-    # Subtitle Text Preview
+    # Sample Lines by Language
     if sub_lang == "English":
         sample_l1 = "A man standing on the mountain"
         sample_l2 = "( Sample English Subtitle )"
@@ -389,7 +403,7 @@ def get_tab3_full_preview_html(
     </div>
     """
 
-    # Video Clip-path for Crop preview
+    # Video Clip-path for Crop Preview
     inset_x = (100 - crop_w_pct) / 2
     inset_y = (100 - crop_h_pct) / 2
     clip_style = f"clip-path: inset({inset_y:.1f}% {inset_x:.1f}% {inset_y:.1f}% {inset_x:.1f}%);"
@@ -424,10 +438,6 @@ def get_tab3_full_preview_html(
         position: relative !important;
         z-index: 5 !important;
         transition: transform 0.15s ease-out;
-    }}
-    #tab3_preview_box .video-container::after {{
-        content: "";
-        display: block;
     }}
     </style>
     <div id="tab3_interactive_overlay" style="
@@ -535,7 +545,7 @@ async def generate_tts_file(text, voice_code, speed_percent, output_name="output
     return output_name
 
 # =========================================================
-# ADVANCED FFMPEG COMPOSER (FIXED EXIT STATUS 234)
+# ADVANCED FFMPEG COMPOSER (SAFE & STABLE)
 # =========================================================
 def hex_to_ass_color(hex_str):
     hex_str = hex_str.lstrip("#")
@@ -564,7 +574,6 @@ def render_advanced_clip(
     }
     tw, th = ratio_dims.get(ratio_choice, (1080, 1920))
 
-    # Base Filters (Flip + Crop + Color Adjustment)
     flip_filter = "hflip," if flip_h else ""
     crop_filter = f"crop=iw*{crop_w_pct/100.0:.2f}:ih*{crop_h_pct/100.0:.2f},"
     color_filter = f"eq=brightness={bright_val - 1.0:.2f}:contrast={contrast_val:.2f}"
@@ -587,7 +596,7 @@ def render_advanced_clip(
 
     current_v = "v_base"
 
-    # Mask to cover original subtitles (Centered coordinates matching Preview)
+    # Mask to cover original subtitles
     if mask_enable:
         mw = int(tw * (mask_w / 100.0))
         mh = int(mask_h * (th / 1920.0 * 2.0))
@@ -624,12 +633,10 @@ def render_advanced_clip(
         )
         current_v = "v_logoed"
 
-    # Burn-in Subtitles with Exact Positioning (Alignment 5 = Center)
+    # Subtitles
     primary_ass = hex_to_ass_color(font_color)
     outline_ass = hex_to_ass_color(outline_color)
     escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
-    
-    # MarginV for ASS subtitle positioning
     calc_margin_v = max(10, int((th / 2) - sub_y))
     sub_style = (
         f"subtitles='{escaped_srt}':force_style="
@@ -639,7 +646,7 @@ def render_advanced_clip(
     )
     filter_chains.append(f"[{current_v}]{sub_style}[vout]")
 
-    # Audio Mixing Configuration
+    # Audio Mixing Configuration (Silent Video Protection)
     audio_inputs_count = 2
     if bgm_audio and os.path.exists(bgm_audio):
         inputs_cmd.extend(["-stream_loop", "-1", "-i", bgm_audio])
@@ -647,8 +654,10 @@ def render_advanced_clip(
         next_input_idx += 1
         audio_inputs_count += 1
 
+    orig_has_audio = has_audio_stream(source_video)
+
     audio_filters = []
-    if enable_orig_audio:
+    if enable_orig_audio and orig_has_audio:
         audio_filters.append("[0:a]volume=0.2[orig_a];")
     else:
         audio_filters.append("aevalsrc=0:d=1[orig_a];")
@@ -674,10 +683,10 @@ def render_advanced_clip(
     ]
 
     try:
-        proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except subprocess.CalledProcessError as e:
         print("FFmpeg Full Render Error Log:\n", e.stderr)
-        # Safe Fallback to prevent crash (Exit status 234 fixed)
+        # Safe Fallback to ensure completion
         fallback_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2"
         fb_cmd = [
             "ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio,
@@ -757,7 +766,7 @@ def tab3_auto_pipeline(
         return None, None, "", None, "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ကို စစ်ဆေးပေးပါ။"
 
     try:
-        # ၁။ ရွေးချယ်ထားသော အသံဘာသာစကားဖြင့် Script ရေးသားခြင်း
+        # ၁။ Script ရေးသားခြင်း
         narration_script, model, dur_msg = run_gemini_video_analysis(target, ratio, voice_lang)
         
         # ၂။ စာတန်းထိုးအတွက် ဘာသာပြန်ခြင်း
