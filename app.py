@@ -16,11 +16,11 @@ APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-# လက်ရှိ အလုပ်လုပ်သော တရားဝင် Gemini Models
+# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
 ]
 
 VOICES = {
@@ -134,14 +134,14 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO STYLING (Screen အပြည့် ပေါ်စေမည့် CSS)
+# DYNAMIC RATIO STYLING (Screen အပြည့် ကွက်တိပြသရန်)
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
-        "1:1": {"aspect": "1 / 1", "max_w": "450px", "max_h": "450px"},
-        "3:4": {"aspect": "3 / 4", "max_w": "380px", "max_h": "506px"},
-        "16:9": {"aspect": "16 / 9", "max_w": "640px", "max_h": "360px"},
-        "9:16": {"aspect": "9 / 16", "max_w": "320px", "max_h": "568px"},
+        "1:1": {"aspect": "1 / 1", "max_w": "450px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "380px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "640px"},
+        "9:16": {"aspect": "9 / 16", "max_w": "320px"},
     }
     cfg = configs.get(ratio, configs["1:1"])
     return f"""
@@ -165,7 +165,7 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
         width: 100% !important;
         height: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
-        object-fit: cover !important; /* ရွေးချယ်ထားသော Ratio အတိုင်း Screen အပြည့် ကွက်တိဖြည့်ရန် */
+        object-fit: cover !important;
         display: block !important;
     }}
     </style>
@@ -294,12 +294,10 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v1_url = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok, Facebook စသည်)")
                     v1_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
                     
-                    # Aspect Ratio ရွေးချယ်မှု
                     v1_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="1:1", label="📐 Preview Screen Aspect Ratio")
                     v1_gen_btn = gr.Button("🚀 Recap Script စတင်ထုတ်မည်", variant="primary")
                 
                 with gr.Column(scale=1):
-                    # Preview Screen အချိုးအစား CSS ထိန်းချုပ်မှု
                     v1_css = gr.HTML(get_ratio_css("1:1", "tab1_preview_container"))
                     v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
@@ -309,16 +307,9 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v1_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
                 v1_zip = gr.File(label="📦 SRT ZIP ဒေါင်းလုဒ်")
 
-            # Video တင်လိုက်သည်နှင့် Preview ထဲ တိုက်ရိုက်ရောက်စေခြင်း
             v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
-            
-            # Link မှ Video ရယူလိုက်သည်နှင့် Preview ထဲ တိုက်ရိုက်ရောက်စေခြင်း
             v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
-            
-            # Ratio ပြောင်းလဲလိုက်ပါက ချက်ချင်း 1:1, 3:4, 16:9, 9:16 အပြည့်ဖြစ်စေခြင်း
             v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
-            
-            # Script ထုတ်လုပ်ခြင်း
             v1_gen_btn.click(tab1_analyze, inputs=[v1_file, v1_url, v1_ratio], outputs=[v1_script_out, v1_status, v1_srt, v1_zip])
 
         # --- TAB 2: TTS ---
@@ -338,7 +329,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
-# Render Server Port
+# Render Server Launch Port
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
