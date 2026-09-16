@@ -238,7 +238,7 @@ Text:
     return text
 
 # =========================================================
-# ABSOLUTE VIDEO OVERLAY CSS (PREVENTS BLANK SCREEN)
+# REAL-TIME PREVIEW & BULLETPROOF JS HUD INJECTOR
 # =========================================================
 def hex_to_rgba(hex_code, opacity):
     hex_code = hex_code.lstrip("#")
@@ -264,17 +264,8 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
         max-width: {cfg["max_w"]} !important;
         margin: 0 auto !important;
     }}
-    #{container_id} .video-container {{
-        width: 100% !important;
-        aspect-ratio: {cfg["aspect"]} !important;
-        height: auto !important;
-        background: #000 !important;
-        border-radius: 12px !important;
-        overflow: hidden !important;
-    }}
     #{container_id} video {{
         width: 100% !important;
-        height: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
         object-fit: cover !important;
         display: block !important;
@@ -282,70 +273,53 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
     </style>
     """
 
-def get_tab3_overlay_html(
+def get_tab3_js_mount_html(
     sub_lang,
-    ratio,
+    ratio, flip_h, scale_val, x_off, y_off,
+    crop_w_pct, crop_h_pct,
+    crop_bg_type, crop_bg_color,
+    bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
     logo_file, logo_size, logo_x, logo_y,
     font_family, font_size, font_color, outline_color, sub_x, sub_y
 ):
     configs = {
-        "1:1": {"aspect": "1 / 1", "max_w": "360px"},
-        "3:4": {"aspect": "3 / 4", "max_w": "330px"},
-        "16:9": {"aspect": "16 / 9", "max_w": "500px"},
-        "9:16": {"aspect": "9 / 16", "max_w": "300px"},
+        "1:1": {"aspect": "1 / 1", "max_w": "380px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "340px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "520px"},
+        "9:16": {"aspect": "9 / 16", "max_w": "310px"},
     }
     cfg = configs.get(ratio, configs["9:16"])
+    aspect_ratio_val = cfg["aspect"]
+    max_w_val = cfg["max_w"]
+    flip_x = "-1" if flip_h else "1"
 
-    # Y-coordinate mappings (Center = 50%)
-    mask_top = 50.0 - (mask_y * 0.15)
-    sub_top = 50.0 - (sub_y * 0.15)
-    logo_top = 50.0 - (logo_y * 0.15)
+    # Percentage relative coordinate positions inside Video Screen
+    mask_top_pct = 50.0 - (mask_y / 5.0)
+    sub_top_pct = 50.0 - (sub_y / 5.0)
+    logo_top_pct = 50.0 - (logo_y / 5.0)
 
-    # 1. Mask Box Overlay
     mask_html = ""
     if mask_enable:
         mask_bg = hex_to_rgba(mask_color, mask_opacity)
         mask_backdrop = "backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);" if mask_type == "Blur (ဝေဝါးဖုံး)" else ""
         mask_html = f"""
-        <div style="
-            position: absolute;
-            left: calc(50% + {mask_x}px);
-            top: {mask_top}%;
-            transform: translate(-50%, -50%);
-            width: {mask_w}%;
-            height: {mask_h}px;
-            background: {mask_bg};
-            {mask_backdrop}
-            border-radius: 6px;
-            pointer-events: none;
-            box-shadow: 0 0 10px rgba(0,0,0,0.4);
-        "></div>
+        <div style="position: absolute; left: calc(50% + {mask_x}px); top: {mask_top_pct}%; transform: translate(-50%, -50%); width: {mask_w}%; height: {mask_h}px; background: {mask_bg}; {mask_backdrop} border-radius: 6px; z-index: 40; pointer-events: none; box-shadow: 0 0 10px rgba(0,0,0,0.4);"></div>
         """
 
-    # 2. Logo Overlay
     logo_html = ""
-    if logo_file:
+    if logo_file and os.path.exists(logo_file):
         try:
             with open(logo_file, "rb") as lf:
                 encoded = base64.b64encode(lf.read()).decode()
                 ext = os.path.splitext(logo_file)[1].lstrip(".").lower() or "png"
                 logo_src = f"data:image/{ext};base64,{encoded}"
                 logo_html = f"""
-                <img src="{logo_src}" style="
-                    position: absolute;
-                    left: calc(50% + {logo_x}px);
-                    top: {logo_top}%;
-                    transform: translate(-50%, -50%);
-                    width: {logo_size}px;
-                    height: auto;
-                    pointer-events: none;
-                "/>
+                <img src="{logo_src}" style="position: absolute; left: calc(50% + {logo_x}px); top: {logo_top_pct}%; transform: translate(-50%, -50%); width: {logo_size}px; height: auto; z-index: 50; pointer-events: none;" />
                 """
         except Exception:
             pass
 
-    # 3. Subtitle Lines
     if sub_lang == "English":
         sample_l1 = "A man standing on the mountain"
         sample_l2 = "( Sample English Subtitle )"
@@ -360,88 +334,66 @@ def get_tab3_overlay_html(
         sample_l2 = "( နမူနာ မြန်မာစာတန်းထိုး )"
 
     sub_html = f"""
-    <div style="
-        position: absolute;
-        left: calc(50% + {sub_x}px);
-        top: {sub_top}%;
-        transform: translate(-50%, -50%);
-        width: 94%;
-        text-align: center;
-        pointer-events: none;
-    ">
-        <span style="
-            display: block;
-            font-family: '{font_family}', sans-serif;
-            font-size: {font_size}px;
-            line-height: 1.35;
-            color: {font_color};
-            text-shadow: 
-                -2px -2px 0 {outline_color},  
-                 2px -2px 0 {outline_color},
-                -2px  2px 0 {outline_color},
-                 2px  2px 0 {outline_color},
-                 0px 3px 6px rgba(0,0,0,0.9);
-            font-weight: 800;
-        ">{sample_l1}</span>
-        <span style="
-            display: block;
-            font-family: '{font_family}', sans-serif;
-            font-size: {font_size}px;
-            line-height: 1.35;
-            color: {font_color};
-            text-shadow: 
-                -2px -2px 0 {outline_color},  
-                 2px -2px 0 {outline_color},
-                -2px  2px 0 {outline_color},
-                 2px  2px 0 {outline_color},
-                 0px 3px 6px rgba(0,0,0,0.9);
-            font-weight: 800;
-        ">{sample_l2}</span>
+    <div style="position: absolute; left: calc(50% + {sub_x}px); top: {sub_top_pct}%; transform: translate(-50%, -50%); width: 92%; text-align: center; z-index: 60; pointer-events: none;">
+        <span style="display: block; font-family: '{font_family}', sans-serif; font-size: {font_size}px; line-height: 1.35; color: {font_color}; text-shadow: -2px -2px 0 {outline_color}, 2px -2px 0 {outline_color}, -2px 2px 0 {outline_color}, 2px 2px 0 {outline_color}, 0px 3px 6px rgba(0,0,0,0.9); font-weight: 800;">{sample_l1}</span>
+        <span style="display: block; font-family: '{font_family}', sans-serif; font-size: {font_size}px; line-height: 1.35; color: {font_color}; text-shadow: -2px -2px 0 {outline_color}, 2px -2px 0 {outline_color}, -2px 2px 0 {outline_color}, 2px 2px 0 {outline_color}, 0px 3px 6px rgba(0,0,0,0.9); font-weight: 800;">{sample_l2}</span>
     </div>
     """
 
-    # Injects directly into the video element container without breaking it
+    wrapper_bg = "#111" if crop_bg_type == "Blur (ဝေဝါးသော နောက်ခံ)" else crop_bg_color
+
+    raw_hud = mask_html + logo_html + sub_html
+    b64_hud = base64.b64encode(raw_hud.encode("utf-8")).decode("utf-8")
+
     return f"""
-    <style id="tab3-mount-css">
-    #tab3_unified_mount {{
-        position: relative !important;
-        width: 100% !important;
-        max-width: {cfg["max_w"]} !important;
-        margin: 0 auto !important;
-    }}
+    <style id="tab3-live-css">
     #tab3_live_video {{
         width: 100% !important;
+        max-width: {max_w_val} !important;
         margin: 0 auto !important;
+        position: relative !important;
     }}
-    #tab3_live_video .video-container {{
-        aspect-ratio: {cfg["aspect"]} !important;
-        background: #000 !important;
+    #tab3_live_video > div, #tab3_live_video video {{
+        aspect-ratio: {aspect_ratio_val} !important;
+        max-width: {max_w_val} !important;
+        margin: 0 auto !important;
         border-radius: 12px !important;
         overflow: hidden !important;
+        background: {wrapper_bg} !important;
     }}
     #tab3_live_video video {{
         width: 100% !important;
         height: 100% !important;
         object-fit: contain !important;
+        transform: scale({scale_val}) scaleX({flip_x}) translate({x_off}px, {y_off}px) !important;
+        filter: brightness({bright_val}) contrast({contrast_val}) !important;
         display: block !important;
     }}
-    #tab3_floating_hud {{
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        pointer-events: none !important;
-        overflow: hidden !important;
-        border-radius: 12px !important;
-        z-index: 20 !important;
-    }}
     </style>
-    <div id="tab3_floating_hud">
-        {mask_html}
-        {logo_html}
-        {sub_html}
-    </div>
+
+    <script>
+    (function attachHUD() {{
+        function mount() {{
+            const vRoot = document.querySelector('#tab3_live_video video') ? document.querySelector('#tab3_live_video video').parentElement : document.querySelector('#tab3_live_video');
+            if (!vRoot) return;
+            vRoot.style.position = 'relative';
+            let hud = vRoot.querySelector('#tab3_dynamic_hud');
+            if (!hud) {{
+                hud = document.createElement('div');
+                hud.id = 'tab3_dynamic_hud';
+                hud.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:30;overflow:hidden;border-radius:12px;';
+                vRoot.appendChild(hud);
+            }}
+            try {{
+                hud.innerHTML = decodeURIComponent(escape(atob("{b64_hud}")));
+            }} catch(e) {{
+                hud.innerHTML = atob("{b64_hud}");
+            }}
+        }}
+        mount();
+        [100, 300, 600, 1200].forEach(d => setTimeout(mount, d));
+    }})();
+    </script>
     """
 
 # =========================================================
@@ -590,7 +542,7 @@ def render_advanced_clip(
         mw = int(tw * (mask_w / 100.0))
         mh = int(mask_h * (th / 1920.0 * 2.2))
         mx = f"(W-{mw})/2+({mask_x})"
-        my = f"(H*0.5)-({mask_y}*(H/650))-({mh}/2)"
+        my = f"(H*0.5)-({mask_y}*(H/500))-({mh}/2)"
 
         if mask_type == "Blur (ဝေဝါးဖုံး)":
             filter_chains.append(
@@ -615,7 +567,7 @@ def render_advanced_clip(
         logo_idx = next_input_idx
         next_input_idx += 1
         lx = f"(W-w)/2+({logo_x})"
-        ly = f"(H*0.5)-({logo_y}*(H/650))-(h/2)"
+        ly = f"(H*0.5)-({logo_y}*(H/500))-(h/2)"
         filter_chains.append(
             f"[{logo_idx}:v]scale={logo_size}:-1[scaled_logo];"
             f"[{current_v}][scaled_logo]overlay={lx}:{ly}[v_logoed]"
@@ -626,7 +578,7 @@ def render_advanced_clip(
     primary_ass = hex_to_ass_color(font_color)
     outline_ass = hex_to_ass_color(outline_color)
     escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
-    calc_margin_v = max(10, int((th / 2) - (sub_y * (th / 650))))
+    calc_margin_v = max(10, int((th / 2) - (sub_y * (th / 500))))
     sub_style = (
         f"subtitles='{escaped_srt}':force_style="
         f"'FontName={font_family},FontSize={font_size},"
@@ -725,7 +677,7 @@ def tab2_tts_with_auto_translate(text, voice_label, speed):
     voice_code = VOICES_BY_LANG["မြန်မာ (Burmese Voice)"].get(voice_label, "my-MM-ThihaNeural")
     try:
         audio_name = asyncio.run(generate_tts_file(current_text, voice_code, speed, "tab2_output.mp3"))
-        audio_dur = get_video_duration(audio_name)
+        audio_dur = get_video_duration(audio_name) or 10.0
         srt_f, zip_f = generate_srt_and_zip(current_text, total_target_duration=audio_dur, prefix="tab2_output")
         status_msg = f"✅ အသံဖိုင် ဖန်တီးပြီးပါပြီ!{trans_note}"
         return current_text, audio_name, audio_name, srt_f, zip_f, status_msg
@@ -778,7 +730,7 @@ def tab3_auto_pipeline(
             generate_tts_file(narration_script, voice_code, speed, "tab3_voice.mp3")
         )
 
-        audio_dur = get_video_duration(audio_file)
+        audio_dur = get_video_duration(audio_file) or 10.0
         srt_file, _ = generate_srt_and_zip(subtitle_script, total_target_duration=audio_dur, prefix="tab3_sub")
 
         # ၄။ Video Render ပြုလုပ်ခြင်း
@@ -969,18 +921,19 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
                 # RIGHT COLUMN: REAL-TIME IN-VIDEO PREVIEW & FINAL VIDEO
                 with gr.Column(scale=1):
-                    # Unified Box: Video + Overlay perfectly locked together
-                    with gr.Group(elem_id="tab3_unified_mount"):
-                        t3_live_video = gr.Video(label="📺 Real-Time Preview (Video ပေါ်တွင် တိုက်ရိုက်ပြသမှု)", elem_id="tab3_live_video")
-                        t3_preview_css = gr.HTML(
-                            get_tab3_overlay_html(
-                                "မြန်မာ (Burmese)",
-                                "9:16",
-                                True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 75, 0, -140,
-                                None, 90, 0, 140,
-                                "Pyidaungsu", 22, "#00E676", "#000000", 0, -140
-                            )
+                    t3_live_video = gr.Video(label="📺 Real-Time Preview (Video ပေါ်တွင် တိုက်ရိုက်ပြသမှု)", elem_id="tab3_live_video")
+                    t3_preview_css = gr.HTML(
+                        get_tab3_js_mount_html(
+                            "မြန်မာ (Burmese)",
+                            "9:16", False, 1.0, 0, 0,
+                            100, 100,
+                            "Blur (ဝေဝါးသော နောက်ခံ)", "#000000",
+                            1.0, 1.0,
+                            True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 75, 0, -140,
+                            None, 90, 0, 140,
+                            "Pyidaungsu", 22, "#00E676", "#000000", 0, -140
                         )
+                    )
                     t3_status = gr.Markdown("စာတန်းထိုးနှင့် Mask များသည် Video Screen မျက်နှာပြင်ပေါ်တွင်သာ တိုက်ရိုက်ကပ်လျက် တည်ရှိနေပါမည်။")
                     t3_final_video = gr.Video(label="🎬 အပြီးစီး Final Video Output (Playable)")
                     t3_script_view = gr.Textbox(label="📝 ထွက်ရှိလာသော စာတန်းထိုး Script", lines=5)
@@ -1015,16 +968,19 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_live_video)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_live_video)
 
-    # Real-Time Preview Updates (Video rendering stays 100% active)
+    # Real-Time Preview Updates
     preview_all_inputs = [
         t3_sub_lang,
-        t3_ratio,
+        t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
+        t3_crop_w, t3_crop_h,
+        t3_crop_bg_type, t3_crop_bg_color,
+        t3_bright, t3_contrast,
         t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
         t3_logo_file, t3_logo_size, t3_logo_x, t3_logo_y,
         t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_x, t3_sub_y
     ]
     for comp in preview_all_inputs:
-        comp.change(get_tab3_overlay_html, inputs=preview_all_inputs, outputs=t3_preview_css)
+        comp.change(get_tab3_js_mount_html, inputs=preview_all_inputs, outputs=t3_preview_css)
 
     # Tab 3 - Generate Final One-Clip Video
     t3_run_btn.click(
