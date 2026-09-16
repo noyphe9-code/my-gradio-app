@@ -9,14 +9,18 @@ import edge_tts
 import yt_dlp
 from google import genai
 
+# =========================================================
+# APP CONFIG & SETTINGS
+# =========================================================
 APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
+# အမြန်ဆုံးနှင့် အတိကျဆုံး Gemini Models များ
 GEMINI_MODELS = [
     "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
 ]
 
 VOICES = {
@@ -24,6 +28,9 @@ VOICES = {
     "Nilar (အမျိုးသမီးအသံ) - Natural": "my-MM-NilarNeural",
 }
 
+# =========================================================
+# API KEY & SYSTEM HELPERS
+# =========================================================
 def save_api_key(api_key):
     global SAVED_API_KEY
     if api_key and api_key.strip():
@@ -48,7 +55,7 @@ def get_video_duration(video_path):
 def validate_video_duration(video_path):
     duration = get_video_duration(video_path)
     if duration is None:
-        return True, "ℹ️ Video duration ကို အတည်ပြု၍ မရသေးပါ။"
+        return True, "ℹ️ Video duration ကို စစ်ဆေးနေပါသည်..."
     minutes = duration / 60
     if minutes > MAX_VIDEO_MINUTES:
         return False, f"⚠️ Video သည် {minutes:.1f} မိနစ်ရှိပါသည်။ အများဆုံး {MAX_VIDEO_MINUTES} မိနစ်အထိသာ လက်ခံပါသည်။"
@@ -63,7 +70,7 @@ def clean_script_for_tts(script_text):
         if not line:
             continue
         line = line.replace("**", "").replace("__", "").replace("`", "")
-        line = re.sub(r"^\s*\[(?:Visual|Scene|Video|Audio|Camera|Action|Narration|Narrator|Dialogue)\]\s*[:\-]?\s*", "", line, flags=re.IGNORECASE)
+        line = re.sub(r"^\s*\[(?:Visual|Scene|Video|Audio|Camera|Action|Narration|Narrator|Dialogue|Intro)\]\s*[:\-]?\s*", "", line, flags=re.IGNORECASE)
         line = re.sub(r"^\s*Narrator\s*:\s*", "", line, flags=re.IGNORECASE)
         if line.lower() in ["movie recap", "recap script", "burmese recap script", "script"] or line.startswith("---"):
             continue
@@ -126,54 +133,50 @@ def download_video_from_link(link):
         print("Download Error:", e)
     return None
 
-def get_ratio_css(ratio, container_id="tab1_preview_container"):
-    configs = {
-        "9:16": {"aspect": "9 / 16", "max_width": "360px"},
-        "3:4": {"aspect": "3 / 4", "max_width": "420px"},
-        "1:1": {"aspect": "1 / 1", "max_width": "500px"},
-        "16:9": {"aspect": "16 / 9", "max_width": "650px"},
-    }
-    cfg = configs.get(ratio, configs["9:16"])
-    return f"""
-    <style id="{container_id}-ratio-style">
-    #{container_id} {{
-        width: 100% !important;
-        max-width: {cfg["max_width"]} !important;
-        margin: 0 auto !important;
-    }}
-    #{container_id} .video-container {{
-        width: 100% !important;
-        aspect-ratio: {cfg["aspect"]} !important;
-        height: auto !important;
-        background: #000 !important;
-        border-radius: 10px !important;
-        overflow: hidden !important;
-    }}
-    #{container_id} video {{
-        width: 100% !important;
-        height: 100% !important;
-        aspect-ratio: {cfg["aspect"]} !important;
-        object-fit: contain !important;
-        display: block !important;
-    }}
-    </style>
-    """
+# =========================================================
+# FULL PREVIEW CSS (ဗီဒီယိုတစ်ခုလုံး အပြည့်အဝ ပေါ်စေရန်)
+# =========================================================
+FULL_PREVIEW_CSS = """
+<style>
+#tab1_preview_container, #tab1_preview_container .video-container {
+    width: 100% !important;
+    max-height: 520px !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    background: #000 !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+}
+#tab1_preview_container video {
+    width: 100% !important;
+    height: auto !important;
+    max-height: 500px !important;
+    object-fit: contain !important; /* ဗီဒီယို တစ်ခုလုံး အပြည့်ပေါ်စေရန် */
+    display: block !important;
+    margin: 0 auto !important;
+}
+</style>
+"""
 
-def build_recap_prompt(selected_ratio):
-    return f"""
-သင်သည် Professional Movie Recap Creator တစ်ယောက်ဖြစ်သည်။ ပေးထားသော Video ကို အစမှအဆုံးအထိ သေချာကြည့်ရှု၊ နားထောင်ပြီး Video ထဲတွင် တကယ်ဖြစ်ပျက်နေသော အဖြစ်အပျက်များကို အခြေခံ၍ သဘာဝကျသော မြန်မာ Movie Recap Script တစ်ခုရေးပါ။
+# =========================================================
+# GEMINI GENERATION CORE (တိကျမြန်ဆန်စေရန်)
+# =========================================================
+def build_recap_prompt():
+    return """
+သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ 
+ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ သေချာကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို တိကျမှန်ကန်ပြီး အဆင်ပြေချောမွေ့စွာ ရေးသားပေးပါ-
 
-Target Aspect Ratio = {selected_ratio}
-
-Style Guidelines:
-1. Narrator + Actual Character Dialogue + Visual Storytelling ပုံစံဖြင့်သာ ရေးပါ။
-2. အင်္ဂလိပ်၊ တရုတ်၊ ဂျပန်၊ ကိုရီးယား၊ ထိုင်း ဘာသာစကားဖြင့် ဇာတ်ကောင်များ ပြောပါက သဘာဝကျကျ မြန်မာစကားပြော ပြန်ဆိုပါ။
-3. [Visual], [Narrator], [Dialogue] စသည့် Technical Label များ လုံးဝမထည့်ရ။
-4. TTS အသံထွက်ဖတ်ရာတွင် ချောမွေ့စေရန် စာကြောင်းများ မရှည်လွန်းစေဘဲ သဘာဝကျကျ ရေးပေးပါ။
+[စည်းမျဉ်းများ]
+၁။ ဗီဒီယိုထဲတွင် တကယ်ဖြစ်ပျက်နေသော အဖြစ်အပျက် အမှန်များကိုသာ အချိန်အစဉ်လိုက် အတိုချုံး၍ တိကျမှန်ကန်စွာ ရေးပါ။
+၂။ ဇာတ်ကောင်များ၏ ပြောစကားများကို သဘာဝကျကျ ဆွဲဆောင်မှုရှိသော မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ပြန်ဆိုပါ။
+၃။ စာဖတ်သူ/နားထောင်သူ စိတ်ဝင်စားစေမည့် ဇာတ်လမ်းပြော (Storytelling) ပုံစံဖြင့်သာ ရေးပါ။
+၄။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များနှင့် မသက်ဆိုင်သော စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
+၅။ Edge-TTS အသံထွက်ဖတ်ရာတွင် သဘာဝကျကျ ချောမွေ့စေရန် စာကြောင်းတစ်ကြောင်းချင်းစီကို တိုတိုရှင်းရှင်းနှင့် အဓိပ္ပာယ်ပြည့်စုံစွာ ရေးပေးပါ။
 """
 
 def generate_with_retry(client, uploaded_file, prompt):
-    retry_delays = [5, 10, 20]
+    retry_delays = [3, 7]
     last_error = None
     for model_name in GEMINI_MODELS:
         for attempt in range(len(retry_delays) + 1):
@@ -192,32 +195,36 @@ def generate_with_retry(client, uploaded_file, prompt):
                     break
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
-def run_gemini_video_analysis(target_media, ratio_choice):
+def run_gemini_video_analysis(target_media):
     global SAVED_API_KEY
     if not SAVED_API_KEY:
-        raise ValueError("Gemini API Key မရှိသေးပါ။ Setting တွင် ထည့်သွင်းပါ။")
+        raise ValueError("Gemini API Key မရှိသေးပါ။ 🔑 API Key Setting ထဲတွင် အရင်ထည့်သွင်းပေးပါ။")
     valid, msg = validate_video_duration(target_media)
     if not valid:
         raise ValueError(msg)
 
     client = genai.Client(api_key=SAVED_API_KEY)
     uploaded_file = client.files.upload(file=target_media)
+    
     start_wait = time.time()
     while True:
         if uploaded_file.state and uploaded_file.state.name == "ACTIVE":
             break
         if uploaded_file.state and uploaded_file.state.name == "FAILED":
-            raise RuntimeError("Gemini Video Processing မအောင်မြင်ပါ။")
+            raise RuntimeError("Gemini Video Processing မအောင်မြင်ပါ။ ဗီဒီယိုဖိုင်ကို စစ်ဆေးပါ။")
         if time.time() - start_wait > 900:
             raise TimeoutError("Gemini Video Processing ကြာမြင့်လွန်းနေပါသည်။")
-        time.sleep(4)
+        time.sleep(3)
         uploaded_file = client.files.get(name=uploaded_file.name)
 
-    prompt = build_recap_prompt(ratio_choice)
+    prompt = build_recap_prompt()
     script_text, used_model = generate_with_retry(client, uploaded_file, prompt)
     clean_text = clean_script_for_tts(script_text)
     return clean_text, used_model, msg
 
+# =========================================================
+# TTS GENERATOR
+# =========================================================
 async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="tab2_output.mp3"):
     clean_text = clean_script_for_tts(text)
     if not clean_text:
@@ -229,17 +236,20 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     srt_file, zip_file = generate_srt_and_zip(clean_text, prefix=output_name.replace(".mp3", ""))
     return output_name, srt_file, zip_file
 
-def tab1_analyze(v_file, v_url, ratio):
+# =========================================================
+# TAB CONTROLLERS
+# =========================================================
+def tab1_analyze(v_file, v_url):
     target = v_file if v_file else download_video_from_link(v_url)
     if not target or not os.path.exists(target):
         return "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
     try:
-        clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
+        clean_text, model, dur_msg = run_gemini_video_analysis(target)
         srt, zip_f = generate_srt_and_zip(clean_text)
-        status = f"✅ Script Ready! ({model})\n{dur_msg}"
+        status = f"✅ Script ရေးသားပြီးပါပြီ! (အသုံးပြုထားသော Model: {model})\n{dur_msg}"
         return clean_text, status, srt, zip_f
     except Exception as e:
-        return "", f"❌ Error: {str(e)}", None, None
+        return "", f"❌ Error ဖြစ်ပေါ်ပါသည်: {str(e)}", None, None
 
 def tab2_tts(text, voice, speed):
     try:
@@ -249,10 +259,14 @@ def tab2_tts(text, voice, speed):
         print("Tab 2 Error:", e)
         return None, None, None, None
 
+# =========================================================
+# GRADIO UI (TAB 1 & TAB 2 ONLY)
+# =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**Video Recap Script Generator & Myanmar Voice-Over**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Natural Myanmar TTS Studio**")
 
     with gr.Tabs():
+        # --- API KEY TAB ---
         with gr.TabItem("🔑 API Key Setting"):
             gr.Markdown("### 🔐 Gemini API Key ထည့်သွင်းပါ")
             api_key_input = gr.Textbox(label="Gemini API Key", type="password", placeholder="AIzaSy...")
@@ -260,38 +274,40 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             key_status = gr.Markdown("")
             save_key_btn.click(save_api_key, inputs=api_key_input, outputs=key_status)
 
+        # --- TAB 1: SCRIPT ---
         with gr.TabItem("1️⃣ Video Analysis & Script"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    v1_file = gr.Video(label="📹 Video File တင်ရန်")
-                    v1_url = gr.Textbox(label="🔗 Video URL (YouTube, TikTok, FB, etc.)")
+                    v1_file = gr.Video(label="📹 Video တင်ပါ")
+                    v1_url = gr.Textbox(label="🔗 Video URL Link (YouTube, Facebook, TikTok, စသည်)")
                     v1_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
-                    v1_ratio = gr.Radio(["9:16", "3:4", "1:1", "16:9"], value="9:16", label="📐 Preview Aspect Ratio")
-                    v1_gen_btn = gr.Button("🚀 Movie Recap Script ထုတ်မည်", variant="primary")
+                    v1_gen_btn = gr.Button("🚀 Recap Script စတင်ထုတ်မည်", variant="primary")
+                
                 with gr.Column(scale=1):
-                    v1_css = gr.HTML(get_ratio_css("9:16", "tab1_preview_container"))
-                    v1_preview = gr.Video(label="📺 Video Preview", elem_id="tab1_preview_container")
+                    gr.HTML(FULL_PREVIEW_CSS)
+                    v1_preview = gr.Video(label="📺 Video Preview (Full View)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
-                    v1_script_out = gr.Textbox(label="🎬 Generated Script", lines=10)
-            with gr.Row():
-                v1_srt = gr.File(label="📄 SRT Subtitle")
-                v1_zip = gr.File(label="📦 SRT ZIP")
+                    v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
 
-            v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
+            with gr.Row():
+                v1_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
+                v1_zip = gr.File(label="📦 SRT ZIP ဒေါင်းလုဒ်")
+
             v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
             v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
-            v1_gen_btn.click(tab1_analyze, inputs=[v1_file, v1_url, v1_ratio], outputs=[v1_script_out, v1_status, v1_srt, v1_zip])
+            v1_gen_btn.click(tab1_analyze, inputs=[v1_file, v1_url], outputs=[v1_script_out, v1_status, v1_srt, v1_zip])
 
+        # --- TAB 2: TTS ---
         with gr.TabItem("2️⃣ Text-to-Speech"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    v2_input_text = gr.Textbox(label="🎙️ Burmese Script ထည့်ရန်", lines=12)
-                    v2_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 Voice ရွေးချယ်ပါ")
+                    v2_input_text = gr.Textbox(label="🎙️ Burmese Script ထည့်ပါ", lines=12)
+                    v2_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 အသံ ရွေးချယ်ပါ")
                     v2_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Speed (%)")
-                    v2_btn = gr.Button("⚡ Burmese Voice ထုတ်မည်", variant="primary")
+                    v2_btn = gr.Button("⚡ မြန်မာအသံဖိုင် ဖန်တီးမည်", variant="primary")
                 with gr.Column(scale=1):
-                    v2_audio = gr.Audio(label="🔊 Voice Preview", autoplay=True)
-                    v2_mp3 = gr.File(label="🎵 MP3 Download")
+                    v2_audio = gr.Audio(label="🔊 Voice Preview (အသံစမ်းနားထောင်ရန်)", autoplay=True)
+                    v2_mp3 = gr.File(label="🎵 MP3 ဖိုင် ဒေါင်းလုဒ်")
             with gr.Row():
                 v2_srt = gr.File(label="📄 SRT")
                 v2_zip = gr.File(label="📦 SRT ZIP")
