@@ -10,13 +10,13 @@ import yt_dlp
 from google import genai
 
 # =========================================================
-# APP CONFIG & SETTINGS
+# CONFIGURATION & SETTINGS
 # =========================================================
 APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-# အမြန်ဆုံးနှင့် အတိကျဆုံး Gemini Models များ
+# လက်ရှိ အလုပ်လုပ်သော တရားဝင် Gemini Models
 GEMINI_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
@@ -29,7 +29,7 @@ VOICES = {
 }
 
 # =========================================================
-# API KEY & SYSTEM HELPERS
+# SYSTEM HELPERS
 # =========================================================
 def save_api_key(api_key):
     global SAVED_API_KEY
@@ -134,45 +134,57 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# FULL PREVIEW CSS (ဗီဒီယိုတစ်ခုလုံး အပြည့်အဝ ပေါ်စေရန်)
+# DYNAMIC RATIO STYLING (Screen အပြည့် ပေါ်စေမည့် CSS)
 # =========================================================
-FULL_PREVIEW_CSS = """
-<style>
-#tab1_preview_container, #tab1_preview_container .video-container {
-    width: 100% !important;
-    max-height: 520px !important;
-    display: flex !important;
-    justify-content: center !important;
-    align-items: center !important;
-    background: #000 !important;
-    border-radius: 12px !important;
-    overflow: hidden !important;
-}
-#tab1_preview_container video {
-    width: 100% !important;
-    height: auto !important;
-    max-height: 500px !important;
-    object-fit: contain !important; /* ဗီဒီယို တစ်ခုလုံး အပြည့်ပေါ်စေရန် */
-    display: block !important;
-    margin: 0 auto !important;
-}
-</style>
-"""
+def get_ratio_css(ratio, container_id="tab1_preview_container"):
+    configs = {
+        "1:1": {"aspect": "1 / 1", "max_w": "450px", "max_h": "450px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "380px", "max_h": "506px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "640px", "max_h": "360px"},
+        "9:16": {"aspect": "9 / 16", "max_w": "320px", "max_h": "568px"},
+    }
+    cfg = configs.get(ratio, configs["1:1"])
+    return f"""
+    <style id="{container_id}-style">
+    #{container_id} {{
+        width: 100% !important;
+        max-width: {cfg["max_w"]} !important;
+        margin: 0 auto !important;
+        transition: all 0.3s ease-in-out !important;
+    }}
+    #{container_id} .video-container {{
+        width: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        height: auto !important;
+        background: #000 !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
+    }}
+    #{container_id} video {{
+        width: 100% !important;
+        height: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        object-fit: cover !important; /* ရွေးချယ်ထားသော Ratio အတိုင်း Screen အပြည့် ကွက်တိဖြည့်ရန် */
+        display: block !important;
+    }}
+    </style>
+    """
 
 # =========================================================
-# GEMINI GENERATION CORE (တိကျမြန်ဆန်စေရန်)
+# GEMINI GENERATION
 # =========================================================
-def build_recap_prompt():
-    return """
+def build_recap_prompt(selected_ratio):
+    return f"""
 သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ 
-ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ သေချာကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို တိကျမှန်ကန်ပြီး အဆင်ပြေချောမွေ့စွာ ရေးသားပေးပါ-
+Target Video Frame Ratio: {selected_ratio}
+ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ တိကျသေချာစွာ ကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို ရေးသားပေးပါ-
 
 [စည်းမျဉ်းများ]
 ၁။ ဗီဒီယိုထဲတွင် တကယ်ဖြစ်ပျက်နေသော အဖြစ်အပျက် အမှန်များကိုသာ အချိန်အစဉ်လိုက် အတိုချုံး၍ တိကျမှန်ကန်စွာ ရေးပါ။
 ၂။ ဇာတ်ကောင်များ၏ ပြောစကားများကို သဘာဝကျကျ ဆွဲဆောင်မှုရှိသော မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ပြန်ဆိုပါ။
-၃။ စာဖတ်သူ/နားထောင်သူ စိတ်ဝင်စားစေမည့် ဇာတ်လမ်းပြော (Storytelling) ပုံစံဖြင့်သာ ရေးပါ။
-၄။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များနှင့် မသက်ဆိုင်သော စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
-၅။ Edge-TTS အသံထွက်ဖတ်ရာတွင် သဘာဝကျကျ ချောမွေ့စေရန် စာကြောင်းတစ်ကြောင်းချင်းစီကို တိုတိုရှင်းရှင်းနှင့် အဓိပ္ပာယ်ပြည့်စုံစွာ ရေးပေးပါ။
+၃။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
+၄။ TTS အသံထွက်ဖတ်ရာတွင် ချောမွေ့စေရန် စာကြောင်းတစ်ကြောင်းချင်းစီကို တိုတိုရှင်းရှင်းနှင့် အဓိပ္ပာယ်ပြည့်စုံစွာ ရေးပေးပါ။
 """
 
 def generate_with_retry(client, uploaded_file, prompt):
@@ -195,7 +207,7 @@ def generate_with_retry(client, uploaded_file, prompt):
                     break
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
-def run_gemini_video_analysis(target_media):
+def run_gemini_video_analysis(target_media, ratio_choice):
     global SAVED_API_KEY
     if not SAVED_API_KEY:
         raise ValueError("Gemini API Key မရှိသေးပါ။ 🔑 API Key Setting ထဲတွင် အရင်ထည့်သွင်းပေးပါ။")
@@ -217,13 +229,13 @@ def run_gemini_video_analysis(target_media):
         time.sleep(3)
         uploaded_file = client.files.get(name=uploaded_file.name)
 
-    prompt = build_recap_prompt()
+    prompt = build_recap_prompt(ratio_choice)
     script_text, used_model = generate_with_retry(client, uploaded_file, prompt)
     clean_text = clean_script_for_tts(script_text)
     return clean_text, used_model, msg
 
 # =========================================================
-# TTS GENERATOR
+# TTS LOGIC
 # =========================================================
 async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="tab2_output.mp3"):
     clean_text = clean_script_for_tts(text)
@@ -239,17 +251,17 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
 # =========================================================
 # TAB CONTROLLERS
 # =========================================================
-def tab1_analyze(v_file, v_url):
+def tab1_analyze(v_file, v_url, ratio):
     target = v_file if v_file else download_video_from_link(v_url)
     if not target or not os.path.exists(target):
         return "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
     try:
-        clean_text, model, dur_msg = run_gemini_video_analysis(target)
+        clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
         srt, zip_f = generate_srt_and_zip(clean_text)
-        status = f"✅ Script ရေးသားပြီးပါပြီ! (အသုံးပြုထားသော Model: {model})\n{dur_msg}"
+        status = f"✅ Script ရေးသားပြီးပါပြီ! (Model: {model})\n{dur_msg}"
         return clean_text, status, srt, zip_f
     except Exception as e:
-        return "", f"❌ Error ဖြစ်ပေါ်ပါသည်: {str(e)}", None, None
+        return "", f"❌ Error: {str(e)}", None, None
 
 def tab2_tts(text, voice, speed):
     try:
@@ -260,10 +272,10 @@ def tab2_tts(text, voice, speed):
         return None, None, None, None
 
 # =========================================================
-# GRADIO UI (TAB 1 & TAB 2 ONLY)
+# GRADIO UI
 # =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Natural Myanmar TTS Studio**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Myanmar Voice-Over**")
 
     with gr.Tabs():
         # --- API KEY TAB ---
@@ -278,14 +290,18 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         with gr.TabItem("1️⃣ Video Analysis & Script"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    v1_file = gr.Video(label="📹 Video တင်ပါ")
-                    v1_url = gr.Textbox(label="🔗 Video URL Link (YouTube, Facebook, TikTok, စသည်)")
+                    v1_file = gr.Video(label="📹 Video File တင်ရန်")
+                    v1_url = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok, Facebook စသည်)")
                     v1_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
+                    
+                    # Aspect Ratio ရွေးချယ်မှု
+                    v1_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="1:1", label="📐 Preview Screen Aspect Ratio")
                     v1_gen_btn = gr.Button("🚀 Recap Script စတင်ထုတ်မည်", variant="primary")
                 
                 with gr.Column(scale=1):
-                    gr.HTML(FULL_PREVIEW_CSS)
-                    v1_preview = gr.Video(label="📺 Video Preview (Full View)", elem_id="tab1_preview_container")
+                    # Preview Screen အချိုးအစား CSS ထိန်းချုပ်မှု
+                    v1_css = gr.HTML(get_ratio_css("1:1", "tab1_preview_container"))
+                    v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
 
@@ -293,9 +309,17 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v1_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
                 v1_zip = gr.File(label="📦 SRT ZIP ဒေါင်းလုဒ်")
 
+            # Video တင်လိုက်သည်နှင့် Preview ထဲ တိုက်ရိုက်ရောက်စေခြင်း
             v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
+            
+            # Link မှ Video ရယူလိုက်သည်နှင့် Preview ထဲ တိုက်ရိုက်ရောက်စေခြင်း
             v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
-            v1_gen_btn.click(tab1_analyze, inputs=[v1_file, v1_url], outputs=[v1_script_out, v1_status, v1_srt, v1_zip])
+            
+            # Ratio ပြောင်းလဲလိုက်ပါက ချက်ချင်း 1:1, 3:4, 16:9, 9:16 အပြည့်ဖြစ်စေခြင်း
+            v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
+            
+            # Script ထုတ်လုပ်ခြင်း
+            v1_gen_btn.click(tab1_analyze, inputs=[v1_file, v1_url, v1_ratio], outputs=[v1_script_out, v1_status, v1_srt, v1_zip])
 
         # --- TAB 2: TTS ---
         with gr.TabItem("2️⃣ Text-to-Speech"):
@@ -314,6 +338,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
+# Render Server Port
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
