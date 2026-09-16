@@ -16,7 +16,7 @@ APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
+# Gemini API Models
 GEMINI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -77,6 +77,21 @@ def clean_script_for_tts(script_text):
         cleaned.append(line.strip())
     return "\n".join(cleaned)
 
+def split_into_two_lines(text, max_line_len=18):
+    """စာတန်းထိုး စာကြောင်းရှည်များကို ဓာတ်ပုံထဲကအတိုင်း အပေါ်အောက် ၂ ကြောင်း ခွဲပေးခြင်း"""
+    text = text.strip()
+    if len(text) <= max_line_len:
+        return text
+    
+    words = text.split(" ")
+    if len(words) >= 2:
+        mid = len(words) // 2
+        return " ".join(words[:mid]) + "\n" + " ".join(words[mid:])
+    
+    # Space မပါပါက စာလုံးရေအလယ်မှ ဖြတ်ခြင်း
+    mid_idx = len(text) // 2
+    return text[:mid_idx] + "\n" + text[mid_idx:]
+
 def seconds_to_srt_time(seconds):
     seconds = max(0, float(seconds))
     hours = int(seconds // 3600)
@@ -89,25 +104,37 @@ def generate_srt_and_zip(script_text, total_target_duration=None, prefix="myanma
     clean_text = clean_script_for_tts(script_text)
     if not clean_text:
         return None, None
-    lines = [x.strip() for x in clean_text.splitlines() if x.strip()]
-    if not lines:
+    raw_lines = [x.strip() for x in clean_text.splitlines() if x.strip()]
+    if not raw_lines:
         return None, None
+
+    # အပေါ်အောက် ၂ ကြောင်းစနစ်ဖြင့် စာတန်းထိုးများကို ဖွဲ့စည်းခြင်း
+    formatted_chunks = []
+    for rl in raw_lines:
+        # စာကြောင်းရှည်လွန်းပါက အပိုင်းခွဲထုတ်ခြင်း
+        if len(rl) > 36:
+            parts = re.split(r'(?<=[။၊])\s*', rl)
+            for p in parts:
+                if p.strip():
+                    formatted_chunks.append(split_into_two_lines(p.strip()))
+        else:
+            formatted_chunks.append(split_into_two_lines(rl))
 
     srt_content = ""
     current_time = 0.0
 
     if total_target_duration and total_target_duration > 0:
-        total_chars = sum(len(line) for line in lines)
-        for idx, line in enumerate(lines, 1):
-            line_weight = len(line) / max(1, total_chars)
+        total_chars = sum(len(line.replace("\n", "")) for line in formatted_chunks)
+        for idx, line in enumerate(formatted_chunks, 1):
+            line_weight = len(line.replace("\n", "")) / max(1, total_chars)
             dur = max(1.5, line_weight * total_target_duration)
             start_time = current_time
             end_time = min(total_target_duration, current_time + dur)
             srt_content += f"{idx}\n{seconds_to_srt_time(start_time)} --> {seconds_to_srt_time(end_time)}\n{line}\n\n"
             current_time = end_time
     else:
-        for idx, line in enumerate(lines, 1):
-            dur = max(2.0, min(8.0, len(line) / 10.0))
+        for idx, line in enumerate(formatted_chunks, 1):
+            dur = max(2.0, min(6.0, len(line.replace("\n", "")) / 9.0))
             start_time = current_time
             end_time = current_time + dur
             srt_content += f"{idx}\n{seconds_to_srt_time(start_time)} --> {seconds_to_srt_time(end_time)}\n{line}\n\n"
@@ -149,7 +176,7 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# TRANSLATION ENGINE (ENG, THAI, CHINESE -> BURMESE)
+# TRANSLATION ENGINE
 # =========================================================
 def has_foreign_text(text):
     if not text:
@@ -192,7 +219,7 @@ Text:
     raise RuntimeError(f"Translation failed: {last_error}")
 
 # =========================================================
-# DYNAMIC RATIO STYLING
+# DYNAMIC PREVIEW & CSS STYLING
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -229,13 +256,88 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
     </style>
     """
 
+def get_tab3_preview_css(ratio, flip_h, scale_val, x_off, y_off, use_blur, bg_color, font_family, font_size, font_color, outline_color, sub_pos):
+    configs = {
+        "1:1": {"aspect": "1 / 1", "max_w": "420px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "360px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "580px"},
+        "9:16": {"aspect": "9 / 16", "max_w": "320px"},
+    }
+    cfg = configs.get(ratio, configs["9:16"])
+    flip_x = "-1" if flip_h else "1"
+    sub_pos_css = "top: 15px;" if sub_pos == "အပေါ်ဘက်" else "bottom: 25px;"
+
+    # Blur background effect in CSS preview
+    blur_bg_style = "filter: blur(12px) brightness(0.65); transform: scale(1.15);" if use_blur else ""
+
+    return f"""
+    <style id="tab3-live-preview-style">
+    #tab3_preview_box {{
+        width: 100% !important;
+        max-width: {cfg["max_w"]} !important;
+        margin: 0 auto !important;
+        position: relative !important;
+    }}
+    #tab3_preview_box .video-container {{
+        width: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        height: auto !important;
+        background: {bg_color} !important;
+        border-radius: 14px !important;
+        overflow: hidden !important;
+        position: relative !important;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.4) !important;
+    }}
+    #tab3_preview_box video {{
+        width: 100% !important;
+        height: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        object-fit: contain !important;
+        transform: scale({scale_val}) scaleX({flip_x}) translate({x_off}px, {y_off}px) !important;
+        display: block !important;
+        position: relative !important;
+        z-index: 2 !important;
+        transition: transform 0.2s ease-out;
+    }}
+    #tab3_preview_sub_overlay {{
+        position: absolute;
+        {sub_pos_css}
+        left: 0;
+        right: 0;
+        text-align: center;
+        z-index: 99;
+        pointer-events: none;
+        padding: 0 10px;
+    }}
+    #tab3_preview_sub_overlay .sub-line {{
+        display: block;
+        font-family: '{font_family}', sans-serif;
+        font-size: {font_size}px;
+        line-height: 1.35;
+        color: {font_color};
+        text-shadow: 
+            -2px -2px 0 {outline_color},  
+             2px -2px 0 {outline_color},
+            -2px  2px 0 {outline_color},
+             2px  2px 0 {outline_color},
+             0px 3px 6px rgba(0,0,0,0.9);
+        font-weight: 800;
+        letter-spacing: 0.5px;
+    }}
+    </style>
+    <div id="tab3_preview_sub_overlay">
+        <span class="sub-line">လူတစ်ယောက် တောင်ပေါ်မှာ</span>
+        <span class="sub-line">( နမူနာစာတန်းထိုး ၂ ကြောင်း )</span>
+    </div>
+    """
+
 # =========================================================
 # GEMINI SCRIPT RECAP CORE
 # =========================================================
 def build_recap_prompt(selected_ratio, video_duration=None):
     dur_guidance = ""
     if video_duration:
-        dur_guidance = f"\nVideo Length: {video_duration:.1f} seconds. Make sure the script length matches this video duration naturally."
+        dur_guidance = f"\nVideo Length: {video_duration:.1f} seconds. Keep the script length and pacing naturally matched."
 
     return f"""
 သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ 
@@ -314,54 +416,112 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="o
     return output_name, srt_file, zip_file
 
 # =========================================================
-# TAB 3: FFmpeg VIDEO COMPOSER & SYNC ENGINE
+# ADVANCED FFMPEG COMPOSER (BLUR BG & 2-LINE SUBTITLE)
 # =========================================================
-def render_final_composite_video(source_video, audio_path, srt_path, ratio_choice, output_filename="final_movie_recap.mp4"):
-    ratio_crops = {
-        "1:1": "crop=min(iw\\,ih):min(iw\\,ih),scale=1080:1080",
-        "3:4": "crop=min(iw\\,ih*3/4):min(ih\\,iw*4/3),scale=810:1080",
-        "16:9": "crop=min(iw\\,ih*16/9):min(ih\\,iw*9/16),scale=1920:1080",
-        "9:16": "crop=min(iw\\,ih*9/16):min(ih\\,iw*16/9),scale=1080:1920",
+def hex_to_ass_color(hex_str):
+    hex_str = hex_str.lstrip("#")
+    if len(hex_str) == 6:
+        r, g, b = hex_str[0:2], hex_str[2:4], hex_str[4:6]
+        return f"&H00{b}{g}{r}&".upper()
+    return "&H00FFFFFF&"
+
+def render_advanced_clip(
+    source_video, tts_audio, srt_path, bgm_audio,
+    enable_orig_audio, bgm_volume,
+    ratio_choice, flip_h, scale_val, x_off, y_off,
+    use_blur, bg_color,
+    font_family, font_size, font_color, outline_color, sub_pos,
+    output_filename="final_movie_recap.mp4"
+):
+    ratio_dims = {
+        "1:1": (1080, 1080),
+        "3:4": (810, 1080),
+        "16:9": (1920, 1080),
+        "9:16": (1080, 1920)
     }
-    vf_crop = ratio_crops.get(ratio_choice, ratio_crops["9:16"])
+    tw, th = ratio_dims.get(ratio_choice, (1080, 1920))
 
-    # Subtitle burn-in စာတန်းထိုး ချောမွေ့အောင် ထည့်သွင်းခြင်း
+    primary_ass = hex_to_ass_color(font_color)
+    outline_ass = hex_to_ass_color(outline_color)
+    alignment = "6" if sub_pos == "အပေါ်ဘက်" else "2"
+    margin_v = "55"
+
     escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
-    vf_filter = f"{vf_crop},subtitles='{escaped_srt}':force_style='FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Alignment=2,MarginV=35'"
+    sub_style = (
+        f"subtitles='{escaped_srt}':force_style="
+        f"'FontName={font_family},FontSize={font_size},"
+        f"PrimaryColour={primary_ass},OutlineColour={outline_ass},"
+        f"BorderStyle=3,Outline=3,Shadow=2,Alignment={alignment},MarginV={margin_v}'"
+    )
 
-    audio_dur = get_video_duration(audio_path) or 10
-    v_dur = get_video_duration(source_video) or 10
+    flip_filter = "hflip," if flip_h else ""
+    bg_clean = bg_color.lstrip("#")
 
-    # ဗီဒီယိုအရှည်နှင့် အသံအရှည်ကို Auto-Sync ညှိနှိုင်းခြင်း
-    cmd = [
-        "ffmpeg", "-y",
-        "-stream_loop", "-1", "-i", source_video,
-        "-i", audio_path,
-        "-t", str(audio_dur),
-        "-vf", vf_filter,
+    # ဝေဝါးသော နောက်ခံ (Blurred Background) Filter Complex ဖန်တီးခြင်း
+    if use_blur:
+        filter_v = (
+            f"[0:v]{flip_filter}split=2[fg_raw][bg_raw];"
+            f"[bg_raw]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},boxblur=25:10,eq=brightness=-0.1[bg_blurred];"
+            f"[fg_raw]scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
+            f"[bg_blurred][fg_scaled]overlay=(W-w)/2+({x_off}):(H-h)/2+({y_off})[v_comp];"
+            f"[v_comp]{sub_style}[vout]"
+        )
+    else:
+        filter_v = (
+            f"[0:v]{flip_filter}scale=iw*{scale_val}:ih*{scale_val},"
+            f"pad={tw}:{th}:({tw}-iw)/2+({x_off}):({th}-ih)/2+({y_off}):color=0x{bg_clean},"
+            f"{sub_style}[vout]"
+        )
+
+    tts_dur = get_video_duration(tts_audio) or 10.0
+
+    # Audio Mixing Configuration
+    cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio]
+    audio_inputs_count = 2
+
+    if bgm_audio and os.path.exists(bgm_audio):
+        cmd.extend(["-stream_loop", "-1", "-i", bgm_audio])
+        audio_inputs_count += 1
+
+    audio_filters = []
+    if enable_orig_audio:
+        audio_filters.append("[0:a]volume=0.2[orig_a];")
+    else:
+        audio_filters.append("aevalsrc=0:d=1[orig_a];")
+
+    audio_filters.append("[1:a]volume=1.0[tts_a];")
+
+    if audio_inputs_count == 3:
+        audio_filters.append(f"[2:a]volume={bgm_volume}[bgm_a];")
+        audio_filters.append("[orig_a][tts_a][bgm_a]amix=inputs=3:duration=first:dropout_transition=2[aout]")
+    else:
+        audio_filters.append("[orig_a][tts_a]amix=inputs=2:duration=first:dropout_transition=2[aout]")
+
+    filter_complex = f"{filter_v};" + "".join(audio_filters)
+
+    cmd.extend([
+        "-filter_complex", filter_complex,
+        "-map", "[vout]", "-map", "[aout]",
+        "-t", str(tts_dur),
         "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
-        "-map", "0:v:0", "-map", "1:a:0",
-        "-shortest",
         output_filename
-    ]
+    ])
 
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if res.returncode != 0:
-        # Subtitle font issue ဖြစ်ပါက subtitle မပါဘဲ clean render ပြန်လုပ်ခြင်း
-        clean_cmd = [
-            "ffmpeg", "-y",
-            "-stream_loop", "-1", "-i", source_video,
-            "-i", audio_path,
-            "-t", str(audio_dur),
-            "-vf", vf_crop,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k",
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except Exception as e:
+        print("Complex Render Failed, falling back to simple render:", e)
+        clean_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(OW-IW)/2:(OH-IH)/2"
+        fb_cmd = [
+            "ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio,
+            "-vf", clean_vf,
             "-map", "0:v:0", "-map", "1:a:0",
-            "-shortest",
+            "-t", str(tts_dur),
+            "-c:v", "libx264", "-preset", "fast", "-c:a", "aac",
             output_filename
         ]
-        subprocess.run(clean_cmd, check=True)
+        subprocess.run(fb_cmd, check=True)
 
     return output_filename
 
@@ -406,26 +566,47 @@ def tab2_tts_with_auto_translate(text, voice, speed):
     except Exception as e:
         return current_text, None, None, None, None, f"❌ Error: {str(e)}"
 
-def tab3_auto_pipeline(v_file, v_url, ratio, voice, speed):
+def tab3_auto_pipeline(
+    v_file, v_url, bgm_file,
+    enable_orig_audio, bgm_vol,
+    ratio, flip_h, scale_val, x_off, y_off,
+    use_blur, bg_color,
+    font_family, font_size, font_color, outline_color, sub_pos,
+    voice, speed
+):
     target = v_file if v_file else download_video_from_link(v_url)
     if not target or not os.path.exists(target):
-        return None, None, None, None, "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ကို စစ်ဆေးပေးပါ။"
+        return None, None, "", None, "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ကို စစ်ဆေးပေးပါ။"
 
     try:
-        # ၁။ Video Recap Script ထုတ်ယူခြင်း
+        # ၁။ Video Recap Script ထုတ်ယူခြင်း (AI Video Analysis)
         clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
         
-        # ၂။ စာတန်းထိုးနှင့် အသံဖိုင် ဖန်တီးခြင်း
-        audio_file, srt_file, zip_file = asyncio.run(
+        # ၂။ စာတန်းထိုး (၂ ကြောင်းခွဲစနစ်) နှင့် မြန်မာအသံဖိုင် ဖန်တီးခြင်း
+        audio_file, srt_file, _ = asyncio.run(
             generate_myanmar_tts(clean_text, voice, speed, "tab3_voice.mp3")
         )
 
-        # ၃။ Video + Audio + Subtitle + Crop Ratio ပေါင်းစပ်ပြီး Final Video ထုတ်ခြင်း
-        final_video = render_final_composite_video(
+        # ၃။ Video + Blurred Background + 2-Line Subtitle + Audio ပေါင်းစပ်ထုတ်လုပ်ခြင်း
+        final_video = render_advanced_clip(
             source_video=target,
-            audio_path=audio_file,
+            tts_audio=audio_file,
             srt_path=srt_file,
+            bgm_audio=bgm_file,
+            enable_orig_audio=enable_orig_audio,
+            bgm_volume=bgm_vol,
             ratio_choice=ratio,
+            flip_h=flip_h,
+            scale_val=scale_val,
+            x_off=x_off,
+            y_off=y_off,
+            use_blur=use_blur,
+            bg_color=bg_color,
+            font_family=font_family,
+            font_size=font_size,
+            font_color=font_color,
+            outline_color=outline_color,
+            sub_pos=sub_pos,
             output_filename="final_movie_recap.mp4"
         )
 
@@ -438,7 +619,7 @@ def tab3_auto_pipeline(v_file, v_url, ratio, voice, speed):
 # GRADIO UI
 # =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**All-in-One AI Movie Recap Studio: Script, Dubbing & Auto Sync**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**All-in-One AI Movie Recap Studio: Script, Dubbing, Subtitles & Real-Time Sync**")
 
     with gr.Tabs() as main_tabs:
         # --- API KEY TAB ---
@@ -492,30 +673,59 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v2_srt = gr.File(label="📄 SRT")
                 v2_zip = gr.File(label="📦 SRT ZIP")
 
-        # --- TAB 3: ONE-CLICK ALL-IN-ONE VIDEO STUDIO ---
+        # --- TAB 3: ONE-CLICK ADVANCED STUDIO ---
         with gr.TabItem("⚡ 3️⃣ One-Click All-in-One Video Studio", id="tab_auto"):
-            gr.Markdown("### 🚀 Video ဖိုင် (သို့မဟုတ် Link) ထည့်လိုက်ရုံဖြင့် စာတန်းထိုး + အသံ + ဗီဒီယို အချိုးအစား ကွက်တိ အပြီးစီးထုတ်လုပ်ပေးမည့် Studio")
+            gr.Markdown("### 🎛️ Blurred Background & စာတန်းထိုး ၂ ကြောင်းစနစ်ပါဝင်သော One-Click Studio")
+            
             with gr.Row():
+                # LEFT COLUMN: SETTINGS
                 with gr.Column(scale=1):
-                    v3_file = gr.Video(label="📹 Video File တင်ရန်")
-                    v3_url = gr.Textbox(label="🔗 Video Link (YouTube, TikTok, Facebook, RedNote စသည်)")
-                    v3_load_btn = gr.Button("🔍 Video Link စစ်ဆေးကြည့်မည်", variant="secondary")
-                    v3_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="9:16", label="📐 Final Video Aspect Ratio")
-                    v3_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 Voice ရွေးချယ်ပါ")
-                    v3_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Voice Speed (%)")
-                    v3_btn = gr.Button("✨ Video အပြီးစီး One-Click ထုတ်လုပ်မည်", variant="primary")
+                    t3_file = gr.Video(label="📹 Video File တင်ရန်")
+                    t3_url = gr.Textbox(label="🔗 Video Link (YouTube, TikTok, Facebook, RedNote စသည်)")
+                    t3_load_btn = gr.Button("🔍 Video ရယူ/စစ်ဆေးမည်", variant="secondary")
 
+                    with gr.Accordion("🔊 အသံပိုင်းဆိုင်ရာ ထိန်းချုပ်မှုများ", open=True):
+                        t3_orig_audio = gr.Checkbox(label="🔊 မူရင်း Video အသံ ဖွင့်မည် (Background အနေဖြင့်)", value=False)
+                        t3_bgm_file = gr.Audio(label="🎵 Background Music (BGM) ထည့်ရန်", type="filepath")
+                        t3_bgm_vol = gr.Slider(0.0, 1.0, value=0.15, step=0.05, label="🎚️ BGM အသံအတိုး/အလျှော့ (Volume)")
+                        t3_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 Voice ရွေးချယ်ပါ")
+                        t3_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Voice Speed (%)")
+
+                    with gr.Accordion("📐 Video ပုံစံ၊ အရွယ်အစားနှင့် နောက်ခံ ဝေဝါးမှု", open=True):
+                        t3_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="9:16", label="📐 Aspect Ratio ရွေးပါ")
+                        t3_blur = gr.Checkbox(label="🌫️ Background Blur (ဝေဝါးသော နောက်ခံ) အသုံးပြုမည်", value=True)
+                        t3_flip = gr.Checkbox(label="🔄 ဗီဒီယို ဘယ်ညာလှန်မည် (Horizontal Flip)", value=False)
+                        t3_scale = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="🔍 Video အကြီး/အသေး (Scale/Zoom)")
+                        with gr.Row():
+                            t3_x_off = gr.Slider(-200, 200, value=0, step=5, label="↔️ ဘယ်/ညာ ရွှေ့မည် (X-Offset)")
+                            t3_y_off = gr.Slider(-200, 200, value=0, step=5, label="↕️ အပေါ်/အောက် ရွှေ့မည် (Y-Offset)")
+                        t3_bgcolor = gr.ColorPicker(label="🎨 Canvas/Background အရောင် (Blur ပိတ်ထားပါက အသုံးပြုရန်)", value="#000000")
+
+                    with gr.Accordion("✍️ စာတန်းထိုး ၂ ကြောင်း Fonts & ဒီဇိုင်း ချိန်ညှိမှု", open=True):
+                        t3_font = gr.Dropdown(["Pyidaungsu", "Padauk", "Myanmar Text", "Arial", "sans-serif"], value="Pyidaungsu", label="🔤 Font ဒီဇိုင်း")
+                        t3_sub_pos = gr.Radio(["အောက်ဘက်", "အပေါ်ဘက်"], value="အောက်ဘက်", label="📍 စာတန်းထိုး နေရာသတ်မှတ်ချက်")
+                        t3_fsize = gr.Slider(14, 38, value=22, step=1, label="📏 စာလုံး အရွယ်အစား")
+                        with gr.Row():
+                            t3_fcolor = gr.ColorPicker(label="🎨 စာလုံးအရောင်", value="#FFF066") # ဓာတ်ပုံထဲကအတိုင်း ဝါနုရောင် default
+                            t3_ocolor = gr.ColorPicker(label="🖌️ အနားသတ် အကြမ်းရောင် (Outline)", value="#000000")
+
+                    t3_run_btn = gr.Button("✨ Video အပြီးစီး One-Click ထုတ်လုပ်မည်", variant="primary", size="lg")
+
+                # RIGHT COLUMN: REAL-TIME PREVIEW & FINAL VIDEO
                 with gr.Column(scale=1):
-                    v3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container"))
-                    v3_output_video = gr.Video(label="🎬 အပြီးစီး Final Video (Playable)", elem_id="tab3_preview_container")
-                    v3_status = gr.Markdown("လုပ်ဆောင်ရန် အသင့်ဖြစ်ပါသည်။")
-                    v3_script_view = gr.Textbox(label="📝 ထွက်ရှိလာသော စာတန်းထိုး Script", lines=6)
+                    t3_preview_css = gr.HTML(
+                        get_tab3_preview_css("9:16", False, 1.0, 0, 0, True, "#000000", "Pyidaungsu", 22, "#FFF066", "#000000", "အောက်ဘက်")
+                    )
+                    t3_live_video = gr.Video(label="📺 Real-Time Preview (နမူနာစာတန်းထိုး ၂ ကြောင်း)", elem_id="tab3_preview_box")
+                    t3_status = gr.Markdown("ဗီဒီယိုနှင့် စတိုင်လ်များကို စိတ်ကြိုက်ချိန်ညှိပြီး Preview တွင် ကြည့်ရှုနိုင်ပါသည်။")
+                    t3_final_video = gr.Video(label="🎬 အပြီးစီး Final Video Output (Playable)")
+                    t3_script_view = gr.Textbox(label="📝 ထွက်ရှိလာသော ဘာသာပြန် စာတန်းထိုး Script", lines=5)
                     with gr.Row():
-                        v3_download_file = gr.File(label="📥 Final Video Download")
-                        v3_srt_file = gr.File(label="📄 SRT Download")
+                        t3_download = gr.File(label="📥 Final Video ဒေါင်းလုဒ်")
+                        t3_srt = gr.File(label="📄 SRT စာတန်းထိုး ဒေါင်းလုဒ်")
 
     # ================= EVENT BINDINGS =================
-    # Tab 1 Events
+    # Tab 1
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
@@ -526,7 +736,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     )
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
-    # Tab 2 Events
+    # Tab 2
     v2_trans_btn.click(handle_direct_translate, inputs=v2_input_text, outputs=[v2_input_text, v2_status])
     v2_btn.click(
         tab2_tts_with_auto_translate, 
@@ -534,14 +744,30 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         outputs=[v2_input_text, v2_audio, v2_mp3, v2_srt, v2_zip, v2_status]
     )
 
-    # Tab 3 Events
-    v3_file.change(lambda f: f, inputs=v3_file, outputs=v3_output_video)
-    v3_load_btn.click(download_video_from_link, inputs=v3_url, outputs=v3_output_video)
-    v3_ratio.change(lambda r: get_ratio_css(r, "tab3_preview_container"), inputs=v3_ratio, outputs=v3_css)
-    v3_btn.click(
+    # Tab 3 - Real-Time Preview Updates
+    t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_live_video)
+    t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_live_video)
+
+    preview_inputs = [
+        t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
+        t3_blur, t3_bgcolor,
+        t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_pos
+    ]
+    for comp in preview_inputs:
+        comp.change(get_tab3_preview_css, inputs=preview_inputs, outputs=t3_preview_css)
+
+    # Tab 3 - Generate Final One-Clip Video
+    t3_run_btn.click(
         tab3_auto_pipeline,
-        inputs=[v3_file, v3_url, v3_ratio, v3_voice, v3_speed],
-        outputs=[v3_output_video, v3_download_file, v3_script_view, v3_srt_file, v3_status]
+        inputs=[
+            t3_file, t3_url, t3_bgm_file,
+            t3_orig_audio, t3_bgm_vol,
+            t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
+            t3_blur, t3_bgcolor,
+            t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_pos,
+            t3_voice, t3_speed
+        ],
+        outputs=[t3_final_video, t3_download, t3_script_view, t3_srt, t3_status]
     )
 
 # Render Server Port
