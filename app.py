@@ -4,6 +4,7 @@ import time
 import zipfile
 import subprocess
 import asyncio
+import base64
 import gradio as gr
 import edge_tts
 import yt_dlp
@@ -16,17 +17,34 @@ APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-# Gemini API Models
+# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.1-flash-lite",
 ]
 
-VOICES = {
-    "Thiha (အမျိုးသားအသံ) - Natural": "my-MM-ThihaNeural",
-    "Nilar (အမျိုးသမီးအသံ) - Natural": "my-MM-NilarNeural",
+# ဘာသာစကားအလိုက် ရွေးချယ်နိုင်သော အသံများ
+VOICES_BY_LANG = {
+    "မြန်မာ (Burmese Voice)": {
+        "Thiha (အမျိုးသားအသံ) - Natural": "my-MM-ThihaNeural",
+        "Nilar (အမျိုးသမီးအသံ) - Natural": "my-MM-NilarNeural",
+    },
+    "English Voice": {
+        "Andrew (Male - Natural)": "en-US-AndrewNeural",
+        "Ava (Female - Natural)": "en-US-AvaNeural",
+    },
+    "ไทย (Thai Voice)": {
+        "Niwat (ผู้ชาย - ธรรมชาติ)": "th-TH-NiwatNeural",
+        "Premwadee (ผู้หญิง - ธรรมชาติ)": "th-TH-PremwadeeNeural",
+    },
+    "中文 (Chinese Voice)": {
+        "Yunxi (男声 - 自然)": "zh-CN-YunxiNeural",
+        "Xiaoxiao (女声 - 自然)": "zh-CN-XiaoxiaoNeural",
+    }
 }
+
+SUBTITLE_LANG_CHOICES = ["မြန်မာ (Burmese)", "English", "ไทย (Thai)", "中文 (Chinese)"]
 
 # =========================================================
 # SYSTEM HELPERS
@@ -77,18 +95,14 @@ def clean_script_for_tts(script_text):
         cleaned.append(line.strip())
     return "\n".join(cleaned)
 
-def split_into_two_lines(text, max_line_len=18):
-    """စာတန်းထိုး စာကြောင်းရှည်များကို ဓာတ်ပုံထဲကအတိုင်း အပေါ်အောက် ၂ ကြောင်း ခွဲပေးခြင်း"""
+def split_into_two_lines(text, max_line_len=20):
     text = text.strip()
     if len(text) <= max_line_len:
         return text
-    
     words = text.split(" ")
     if len(words) >= 2:
         mid = len(words) // 2
         return " ".join(words[:mid]) + "\n" + " ".join(words[mid:])
-    
-    # Space မပါပါက စာလုံးရေအလယ်မှ ဖြတ်ခြင်း
     mid_idx = len(text) // 2
     return text[:mid_idx] + "\n" + text[mid_idx:]
 
@@ -100,7 +114,7 @@ def seconds_to_srt_time(seconds):
     millis = int((seconds - int(seconds)) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-def generate_srt_and_zip(script_text, total_target_duration=None, prefix="myanmar_recap"):
+def generate_srt_and_zip(script_text, total_target_duration=None, prefix="recap_sub"):
     clean_text = clean_script_for_tts(script_text)
     if not clean_text:
         return None, None
@@ -108,12 +122,10 @@ def generate_srt_and_zip(script_text, total_target_duration=None, prefix="myanma
     if not raw_lines:
         return None, None
 
-    # အပေါ်အောက် ၂ ကြောင်းစနစ်ဖြင့် စာတန်းထိုးများကို ဖွဲ့စည်းခြင်း
     formatted_chunks = []
     for rl in raw_lines:
-        # စာကြောင်းရှည်လွန်းပါက အပိုင်းခွဲထုတ်ခြင်း
-        if len(rl) > 36:
-            parts = re.split(r'(?<=[။၊])\s*', rl)
+        if len(rl) > 40:
+            parts = re.split(r'(?<=[။၊.,!?])\s*', rl)
             for p in parts:
                 if p.strip():
                     formatted_chunks.append(split_into_two_lines(p.strip()))
@@ -134,7 +146,7 @@ def generate_srt_and_zip(script_text, total_target_duration=None, prefix="myanma
             current_time = end_time
     else:
         for idx, line in enumerate(formatted_chunks, 1):
-            dur = max(2.0, min(6.0, len(line.replace("\n", "")) / 9.0))
+            dur = max(2.0, min(6.0, len(line.replace("\n", "")) / 10.0))
             start_time = current_time
             end_time = current_time + dur
             srt_content += f"{idx}\n{seconds_to_srt_time(start_time)} --> {seconds_to_srt_time(end_time)}\n{line}\n\n"
@@ -176,7 +188,7 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# TRANSLATION ENGINE
+# TRANSLATION ENGINE (ENG, THAI, CHINESE -> BURMESE)
 # =========================================================
 def has_foreign_text(text):
     if not text:
@@ -185,7 +197,7 @@ def has_foreign_text(text):
         return True
     return False
 
-def translate_to_burmese(text):
+def translate_to_target_language(text, target_lang):
     global SAVED_API_KEY
     if not text or not text.strip():
         return ""
@@ -194,17 +206,14 @@ def translate_to_burmese(text):
 
     client = genai.Client(api_key=SAVED_API_KEY)
     prompt = f"""
-You are an expert translator and movie storyteller.
-Translate the following text into natural, engaging Burmese spoken narration for Movie Recap & Voice-Over.
-[Rules]
-1. Translate into fluent spoken Burmese narration.
-2. Remove any timestamps, camera notes, or brackets.
-3. Output ONLY the translated Burmese text without greetings or markdown wrappers.
+You are an expert movie subtitle translator.
+Translate the following movie narration lines into {target_lang} for subtitles.
+Keep each line concise, natural, and accurately mapped line-by-line.
+Output ONLY the translated lines without commentary or markdown ticks.
 
 Text:
 {text}
 """
-    last_error = None
     for model_name in GEMINI_MODELS:
         try:
             response = client.models.generate_content(
@@ -213,13 +222,12 @@ Text:
             )
             if response and response.text:
                 return clean_script_for_tts(response.text)
-        except Exception as e:
-            last_error = e
+        except Exception:
             continue
-    raise RuntimeError(f"Translation failed: {last_error}")
+    return text
 
 # =========================================================
-# DYNAMIC PREVIEW & CSS STYLING
+# CSS STYLING & REAL-TIME PREVIEW ENGINE
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -256,7 +264,23 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
     </style>
     """
 
-def get_tab3_preview_css(ratio, flip_h, scale_val, x_off, y_off, use_blur, bg_color, font_family, font_size, font_color, outline_color, sub_pos):
+def hex_to_rgba(hex_code, opacity):
+    hex_code = hex_code.lstrip("#")
+    if len(hex_code) == 6:
+        r = int(hex_code[0:2], 16)
+        g = int(hex_code[2:4], 16)
+        b = int(hex_code[4:6], 16)
+        return f"rgba({r}, {g}, {b}, {opacity})"
+    return f"rgba(0, 0, 0, {opacity})"
+
+def get_tab3_full_preview_html(
+    sub_lang,
+    ratio, flip_h, scale_val, x_off, y_off, use_blur_bg, bg_color,
+    bright_val, contrast_val,
+    mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
+    logo_file, logo_size, logo_x, logo_y,
+    font_family, font_size, font_color, outline_color, sub_x, sub_y
+):
     configs = {
         "1:1": {"aspect": "1 / 1", "max_w": "420px"},
         "3:4": {"aspect": "3 / 4", "max_w": "360px"},
@@ -265,10 +289,106 @@ def get_tab3_preview_css(ratio, flip_h, scale_val, x_off, y_off, use_blur, bg_co
     }
     cfg = configs.get(ratio, configs["9:16"])
     flip_x = "-1" if flip_h else "1"
-    sub_pos_css = "top: 15px;" if sub_pos == "အပေါ်ဘက်" else "bottom: 25px;"
 
-    # Blur background effect in CSS preview
-    blur_bg_style = "filter: blur(12px) brightness(0.65); transform: scale(1.15);" if use_blur else ""
+    # Mask Style
+    mask_html = ""
+    if mask_enable:
+        mask_bg = hex_to_rgba(mask_color, mask_opacity)
+        mask_backdrop = "backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);" if mask_type == "Blur (ဝေဝါးဖုံး)" else ""
+        mask_html = f"""
+        <div style="
+            position: absolute;
+            left: calc(50% + {mask_x}px);
+            bottom: calc(20% + {mask_y}px);
+            transform: translateX(-50%);
+            width: {mask_w}%;
+            height: {mask_h}px;
+            background: {mask_bg};
+            {mask_backdrop}
+            border-radius: 6px;
+            z-index: 10;
+            pointer-events: none;
+        "></div>
+        """
+
+    # Logo Style
+    logo_html = ""
+    if logo_file:
+        try:
+            with open(logo_file, "rb") as lf:
+                encoded = base64.b64encode(lf.read()).decode()
+                ext = os.path.splitext(logo_file)[1].lstrip(".").lower() or "png"
+                logo_src = f"data:image/{ext};base64,{encoded}"
+                logo_html = f"""
+                <img src="{logo_src}" style="
+                    position: absolute;
+                    left: calc(50% + {logo_x}px);
+                    top: calc(15% + {logo_y}px);
+                    transform: translate(-50%, -50%);
+                    width: {logo_size}px;
+                    height: auto;
+                    z-index: 20;
+                    pointer-events: none;
+                "/>
+                """
+        except Exception:
+            pass
+
+    # Language Sample Lines according to sub_lang selection
+    if sub_lang == "English":
+        sample_l1 = "A man standing on the mountain"
+        sample_l2 = "( Sample English Subtitle )"
+    elif sub_lang == "ไทย (Thai)":
+        sample_l1 = "ชายคนหนึ่งยืนอยู่บนภูเขา"
+        sample_l2 = "( ตัวอย่างซับไตเติลภาษาไทย )"
+    elif sub_lang == "中文 (Chinese)":
+        sample_l1 = "一个人站在高高的山顶上"
+        sample_l2 = "( 示例中文字幕展示 )"
+    else:
+        sample_l1 = "လူတစ်ယောက် တောင်ပေါ်မှာ"
+        sample_l2 = "( နမူနာ မြန်မာစာတန်းထိုး )"
+
+    sub_html = f"""
+    <div style="
+        position: absolute;
+        left: calc(50% + {sub_x}px);
+        bottom: calc(15% + {sub_y}px);
+        transform: translateX(-50%);
+        width: 90%;
+        text-align: center;
+        z-index: 30;
+        pointer-events: none;
+    ">
+        <span style="
+            display: block;
+            font-family: '{font_family}', sans-serif;
+            font-size: {font_size}px;
+            line-height: 1.35;
+            color: {font_color};
+            text-shadow: 
+                -2px -2px 0 {outline_color},  
+                 2px -2px 0 {outline_color},
+                -2px  2px 0 {outline_color},
+                 2px  2px 0 {outline_color},
+                 0px 3px 6px rgba(0,0,0,0.9);
+            font-weight: 800;
+        ">{sample_l1}</span>
+        <span style="
+            display: block;
+            font-family: '{font_family}', sans-serif;
+            font-size: {font_size}px;
+            line-height: 1.35;
+            color: {font_color};
+            text-shadow: 
+                -2px -2px 0 {outline_color},  
+                 2px -2px 0 {outline_color},
+                -2px  2px 0 {outline_color},
+                 2px  2px 0 {outline_color},
+                 0px 3px 6px rgba(0,0,0,0.9);
+            font-weight: 800;
+        ">{sample_l2}</span>
+    </div>
+    """
 
     return f"""
     <style id="tab3-live-preview-style">
@@ -294,62 +414,45 @@ def get_tab3_preview_css(ratio, flip_h, scale_val, x_off, y_off, use_blur, bg_co
         aspect-ratio: {cfg["aspect"]} !important;
         object-fit: contain !important;
         transform: scale({scale_val}) scaleX({flip_x}) translate({x_off}px, {y_off}px) !important;
+        filter: brightness({bright_val}) contrast({contrast_val}) !important;
         display: block !important;
         position: relative !important;
         z-index: 2 !important;
         transition: transform 0.2s ease-out;
     }}
-    #tab3_preview_sub_overlay {{
-        position: absolute;
-        {sub_pos_css}
-        left: 0;
-        right: 0;
-        text-align: center;
-        z-index: 99;
-        pointer-events: none;
-        padding: 0 10px;
-    }}
-    #tab3_preview_sub_overlay .sub-line {{
-        display: block;
-        font-family: '{font_family}', sans-serif;
-        font-size: {font_size}px;
-        line-height: 1.35;
-        color: {font_color};
-        text-shadow: 
-            -2px -2px 0 {outline_color},  
-             2px -2px 0 {outline_color},
-            -2px  2px 0 {outline_color},
-             2px  2px 0 {outline_color},
-             0px 3px 6px rgba(0,0,0,0.9);
-        font-weight: 800;
-        letter-spacing: 0.5px;
-    }}
     </style>
-    <div id="tab3_preview_sub_overlay">
-        <span class="sub-line">လူတစ်ယောက် တောင်ပေါ်မှာ</span>
-        <span class="sub-line">( နမူနာစာတန်းထိုး ၂ ကြောင်း )</span>
-    </div>
+    {mask_html}
+    {logo_html}
+    {sub_html}
     """
 
 # =========================================================
-# GEMINI SCRIPT RECAP CORE
+# GEMINI GENERATION CORE
 # =========================================================
-def build_recap_prompt(selected_ratio, video_duration=None):
+def build_recap_prompt(selected_ratio, voice_language, video_duration=None):
     dur_guidance = ""
     if video_duration:
-        dur_guidance = f"\nVideo Length: {video_duration:.1f} seconds. Keep the script length and pacing naturally matched."
+        dur_guidance = f"\nVideo Length: {video_duration:.1f} seconds. Keep the recap pacing perfectly aligned with this duration."
+
+    lang_instructions = {
+        "မြန်မာ (Burmese Voice)": "မြန်မာ Movie Recap Script အဖြစ် မြန်မာစာလုံးပေါင်း သတ်ပုံတိကျစွာ သဘာဝကျကျ ရေးသားပေးပါ။",
+        "English Voice": "Write an engaging, fluent English Movie Recap Script suitable for viral video narration.",
+        "ไทย (Thai Voice)": "เขียนบทพากย์สรุปหนังภาษาไทย (Thai Movie Recap Script) ที่น่าสนใจ ถูกต้องตามไวยากรณ์ และกระชับชัดเจน",
+        "中文 (Chinese Voice)": "写出地道、流畅的中文电影解说旁白文案，语句紧凑生动。"
+    }
+
+    instruction = lang_instructions.get(voice_language, lang_instructions["မြန်မာ (Burmese Voice)"])
 
     return f"""
-သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ 
+You are an expert Professional Movie Recap Scriptwriter.
 Target Aspect Ratio = {selected_ratio}{dur_guidance}
+Target Narration Voice Language = {voice_language}
 
-ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ တိကျသေချာစွာ ကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို ရေးသားပေးပါ-
-
-[စည်းမျဉ်းများ]
-၁။ ဗီဒီယိုထဲတွင် တကယ်ဖြစ်ပျက်နေသော အဖြစ်အပျက် အမှန်များကိုသာ အချိန်အစဉ်လိုက် အတိုချုံး၍ တိကျမှန်ကန်စွာ ရေးပါ။
-၂။ ဇာတ်ကောင်များ၏ ပြောစကားများကို သဘာဝကျကျ ဆွဲဆောင်မှုရှိသော မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ပြန်ဆိုပါ။
-၃။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
-၄။ TTS အသံထွက်ဖတ်ရာတွင် ချောမွေ့စေရန် စာကြောင်းတစ်ကြောင်းချင်းစီကို တိုတိုရှင်းရှင်းနှင့် အဓိပ္ပာယ်ပြည့်စုံစွာ ရေးပေးပါ။
+Instructions:
+1. {instruction}
+2. Accurately describe what actually happens in the video, capturing character actions and dialog.
+3. Do NOT include any technical labels like [Visual], [Scene], [Narrator], [Dialogue], or timestamps.
+4. Keep each line clear and rhythmic for natural TTS audio synthesis and subtitle synchronization.
 """
 
 def generate_with_retry(client, uploaded_file, prompt):
@@ -372,7 +475,7 @@ def generate_with_retry(client, uploaded_file, prompt):
                     break
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
-def run_gemini_video_analysis(target_media, ratio_choice):
+def run_gemini_video_analysis(target_media, ratio_choice, voice_language="မြန်မာ (Burmese Voice)"):
     global SAVED_API_KEY
     if not SAVED_API_KEY:
         raise ValueError("Gemini API Key မရှိသေးပါ။ 🔑 API Key Setting ထဲတွင် အရင်ထည့်သွင်းပေးပါ။")
@@ -395,7 +498,7 @@ def run_gemini_video_analysis(target_media, ratio_choice):
         uploaded_file = client.files.get(name=uploaded_file.name)
 
     v_dur = get_video_duration(target_media)
-    prompt = build_recap_prompt(ratio_choice, v_dur)
+    prompt = build_recap_prompt(ratio_choice, voice_language, v_dur)
     script_text, used_model = generate_with_retry(client, uploaded_file, prompt)
     clean_text = clean_script_for_tts(script_text)
     return clean_text, used_model, msg
@@ -403,20 +506,17 @@ def run_gemini_video_analysis(target_media, ratio_choice):
 # =========================================================
 # TTS LOGIC
 # =========================================================
-async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="output_voice.mp3"):
+async def generate_tts_file(text, voice_code, speed_percent, output_name="output_voice.mp3"):
     clean_text = clean_script_for_tts(text)
     if not clean_text:
-        return None, None, None
-    selected_voice = VOICES.get(voice_choice, "my-MM-ThihaNeural")
+        return None
     rate_str = f"{int(speed_percent):+d}%"
-    communicate = edge_tts.Communicate(clean_text, selected_voice, rate=rate_str)
+    communicate = edge_tts.Communicate(clean_text, voice_code, rate=rate_str)
     await communicate.save(output_name)
-    audio_dur = get_video_duration(output_name)
-    srt_file, zip_file = generate_srt_and_zip(clean_text, total_target_duration=audio_dur, prefix=output_name.replace(".mp3", ""))
-    return output_name, srt_file, zip_file
+    return output_name
 
 # =========================================================
-# ADVANCED FFMPEG COMPOSER (BLUR BG & 2-LINE SUBTITLE)
+# ADVANCED FFMPEG COMPOSER
 # =========================================================
 def hex_to_ass_color(hex_str):
     hex_str = hex_str.lstrip("#")
@@ -429,8 +529,11 @@ def render_advanced_clip(
     source_video, tts_audio, srt_path, bgm_audio,
     enable_orig_audio, bgm_volume,
     ratio_choice, flip_h, scale_val, x_off, y_off,
-    use_blur, bg_color,
-    font_family, font_size, font_color, outline_color, sub_pos,
+    use_blur_bg, bg_color,
+    bright_val, contrast_val,
+    mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
+    logo_file, logo_size, logo_x, logo_y,
+    font_family, font_size, font_color, outline_color, sub_x, sub_y,
     output_filename="final_movie_recap.mp4"
 ):
     ratio_dims = {
@@ -441,46 +544,83 @@ def render_advanced_clip(
     }
     tw, th = ratio_dims.get(ratio_choice, (1080, 1920))
 
+    flip_filter = "hflip," if flip_h else ""
+    color_filter = f"eq=brightness={bright_val - 1.0:.2f}:contrast={contrast_val:.2f}"
+    bg_clean = bg_color.lstrip("#")
+
+    filter_chains = []
+
+    if use_blur_bg:
+        filter_chains.append(
+            f"[0:v]{flip_filter}{color_filter},split=2[fg_raw][bg_raw];"
+            f"[bg_raw]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},boxblur=25:10,eq=brightness=-0.1[bg_blurred];"
+            f"[fg_raw]scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
+            f"[bg_blurred][fg_scaled]overlay=(W-w)/2+({x_off}):(H-h)/2+({y_off})[v_base]"
+        )
+    else:
+        filter_chains.append(
+            f"[0:v]{flip_filter}{color_filter},scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease,"
+            f"pad={tw}:{th}:({tw}-iw)/2+({x_off}):({th}-ih)/2+({y_off}):color=0x{bg_clean}[v_base]"
+        )
+
+    current_v = "v_base"
+
+    # Mask to cover original subtitles
+    if mask_enable:
+        mw = int(tw * (mask_w / 100.0))
+        mh = int(mask_h * (th / 1920.0 * 2.0))
+        mx = f"(W-{mw})/2+({mask_x})"
+        my = f"H*0.8-({mask_y})"
+
+        if mask_type == "Blur (ဝေဝါးဖုံး)":
+            filter_chains.append(
+                f"[{current_v}]split=2[v_m1][v_m2];"
+                f"[v_m2]crop={mw}:{mh}:{mx}:{my},boxblur=20:8[v_blurred_crop];"
+                f"[v_m1][v_blurred_crop]overlay={mx}:{my}[v_masked]"
+            )
+        else:
+            m_hex = mask_color.lstrip("#")
+            filter_chains.append(
+                f"color=c=0x{m_hex}@{mask_opacity}:s={mw}x{mh}[mask_box];"
+                f"[{current_v}][mask_box]overlay={mx}:{my}[v_masked]"
+            )
+        current_v = "v_masked"
+
+    # Logo Overlay
+    inputs_cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio]
+    next_input_idx = 2
+
+    if logo_file and os.path.exists(logo_file):
+        inputs_cmd.extend(["-i", logo_file])
+        logo_idx = next_input_idx
+        next_input_idx += 1
+        lx = f"(W-w)/2+({logo_x})"
+        ly = f"H*0.15+({logo_y})"
+        filter_chains.append(
+            f"[{logo_idx}:v]scale={logo_size}:-1[scaled_logo];"
+            f"[{current_v}][scaled_logo]overlay={lx}:{ly}[v_logoed]"
+        )
+        current_v = "v_logoed"
+
+    # Subtitles
     primary_ass = hex_to_ass_color(font_color)
     outline_ass = hex_to_ass_color(outline_color)
-    alignment = "6" if sub_pos == "အပေါ်ဘက်" else "2"
-    margin_v = "55"
-
+    calc_margin_v = max(10, int(150 - sub_y))
     escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
     sub_style = (
         f"subtitles='{escaped_srt}':force_style="
         f"'FontName={font_family},FontSize={font_size},"
         f"PrimaryColour={primary_ass},OutlineColour={outline_ass},"
-        f"BorderStyle=3,Outline=3,Shadow=2,Alignment={alignment},MarginV={margin_v}'"
+        f"BorderStyle=3,Outline=3,Shadow=2,Alignment=2,MarginV={calc_margin_v}'"
     )
+    filter_chains.append(f"[{current_v}]{sub_style}[vout]")
 
-    flip_filter = "hflip," if flip_h else ""
-    bg_clean = bg_color.lstrip("#")
-
-    # ဝေဝါးသော နောက်ခံ (Blurred Background) Filter Complex ဖန်တီးခြင်း
-    if use_blur:
-        filter_v = (
-            f"[0:v]{flip_filter}split=2[fg_raw][bg_raw];"
-            f"[bg_raw]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},boxblur=25:10,eq=brightness=-0.1[bg_blurred];"
-            f"[fg_raw]scale=iw*{scale_val}:ih*{scale_val}:force_original_aspect_ratio=decrease[fg_scaled];"
-            f"[bg_blurred][fg_scaled]overlay=(W-w)/2+({x_off}):(H-h)/2+({y_off})[v_comp];"
-            f"[v_comp]{sub_style}[vout]"
-        )
-    else:
-        filter_v = (
-            f"[0:v]{flip_filter}scale=iw*{scale_val}:ih*{scale_val},"
-            f"pad={tw}:{th}:({tw}-iw)/2+({x_off}):({th}-ih)/2+({y_off}):color=0x{bg_clean},"
-            f"{sub_style}[vout]"
-        )
-
-    tts_dur = get_video_duration(tts_audio) or 10.0
-
-    # Audio Mixing Configuration
-    cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio]
+    # Audio Mixing
     audio_inputs_count = 2
-
     if bgm_audio and os.path.exists(bgm_audio):
-        cmd.extend(["-stream_loop", "-1", "-i", bgm_audio])
+        inputs_cmd.extend(["-stream_loop", "-1", "-i", bgm_audio])
+        bgm_idx = next_input_idx
+        next_input_idx += 1
         audio_inputs_count += 1
 
     audio_filters = []
@@ -492,26 +632,27 @@ def render_advanced_clip(
     audio_filters.append("[1:a]volume=1.0[tts_a];")
 
     if audio_inputs_count == 3:
-        audio_filters.append(f"[2:a]volume={bgm_volume}[bgm_a];")
+        audio_filters.append(f"[{bgm_idx}:a]volume={bgm_volume}[bgm_a];")
         audio_filters.append("[orig_a][tts_a][bgm_a]amix=inputs=3:duration=first:dropout_transition=2[aout]")
     else:
         audio_filters.append("[orig_a][tts_a]amix=inputs=2:duration=first:dropout_transition=2[aout]")
 
-    filter_complex = f"{filter_v};" + "".join(audio_filters)
+    full_filter_complex = ";".join(filter_chains) + ";" + "".join(audio_filters)
+    tts_dur = get_video_duration(tts_audio) or 10.0
 
-    cmd.extend([
-        "-filter_complex", filter_complex,
+    cmd = inputs_cmd + [
+        "-filter_complex", full_filter_complex,
         "-map", "[vout]", "-map", "[aout]",
         "-t", str(tts_dur),
         "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         output_filename
-    ])
+    ]
 
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception as e:
-        print("Complex Render Failed, falling back to simple render:", e)
+        print("Complex Render Failed, fallback to standard:", e)
         clean_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(OW-IW)/2:(OH-IH)/2"
         fb_cmd = [
             "ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio,
@@ -533,7 +674,7 @@ def tab1_analyze(v_file, v_url, ratio):
     if not target or not os.path.exists(target):
         return "", "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
     try:
-        clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
+        clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio, "မြန်မာ (Burmese Voice)")
         srt, zip_f = generate_srt_and_zip(clean_text)
         status = f"✅ Script ရေးသားပြီးပါပြီ! (Model: {model})\n{dur_msg}"
         return clean_text, clean_text, status, srt, zip_f
@@ -544,50 +685,80 @@ def handle_direct_translate(text):
     if not text or not text.strip():
         return "", "⚠️ ဘာသာပြန်ရန် စာသားထည့်ပေးပါ။"
     try:
-        translated = translate_to_burmese(text)
+        translated = translate_to_target_language(text, "Burmese (မြန်မာ)")
         return translated, "✅ မြန်မာဘာသာသို့ အောင်မြင်စွာ ပြန်ဆိုပြီးပါပြီ။"
     except Exception as e:
         return text, f"❌ Translation Error: {str(e)}"
 
-def tab2_tts_with_auto_translate(text, voice, speed):
+def tab2_tts_with_auto_translate(text, voice_label, speed):
     current_text = text
     trans_note = ""
     if has_foreign_text(current_text):
         try:
-            current_text = translate_to_burmese(current_text)
+            current_text = translate_to_target_language(current_text, "Burmese (မြန်မာ)")
             trans_note = " (အလိုအလျောက် မြန်မာပြန်ဆိုထားပါသည်)"
         except Exception as e:
             print("Auto Translate Error:", e)
 
+    voice_code = VOICES_BY_LANG["မြန်မာ (Burmese Voice)"].get(voice_label, "my-MM-ThihaNeural")
     try:
-        mp3, srt, zip_f = asyncio.run(generate_myanmar_tts(current_text, voice, speed, "tab2_output.mp3"))
+        audio_name = asyncio.run(generate_tts_file(current_text, voice_code, speed, "tab2_output.mp3"))
+        audio_dur = get_video_duration(audio_name)
+        srt_f, zip_f = generate_srt_and_zip(current_text, total_target_duration=audio_dur, prefix="tab2_output")
         status_msg = f"✅ အသံဖိုင် ဖန်တီးပြီးပါပြီ!{trans_note}"
-        return current_text, mp3, mp3, srt, zip_f, status_msg
+        return current_text, audio_name, audio_name, srt_f, zip_f, status_msg
     except Exception as e:
         return current_text, None, None, None, None, f"❌ Error: {str(e)}"
 
+def update_voice_choices(voice_lang):
+    voices = list(VOICES_BY_LANG[voice_lang].keys())
+    return gr.Dropdown(choices=voices, value=voices[0])
+
 def tab3_auto_pipeline(
     v_file, v_url, bgm_file,
+    voice_lang, voice_label, speed,
+    sub_lang,
     enable_orig_audio, bgm_vol,
     ratio, flip_h, scale_val, x_off, y_off,
-    use_blur, bg_color,
-    font_family, font_size, font_color, outline_color, sub_pos,
-    voice, speed
+    use_blur_bg, bg_color,
+    bright_val, contrast_val,
+    mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
+    logo_file, logo_size, logo_x, logo_y,
+    font_family, font_size, font_color, outline_color, sub_x, sub_y
 ):
     target = v_file if v_file else download_video_from_link(v_url)
     if not target or not os.path.exists(target):
         return None, None, "", None, "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ကို စစ်ဆေးပေးပါ။"
 
     try:
-        # ၁။ Video Recap Script ထုတ်ယူခြင်း (AI Video Analysis)
-        clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
+        # ၁။ ရွေးချယ်ထားသော အသံဘာသာစကားဖြင့် Script ရေးသားခြင်း
+        narration_script, model, dur_msg = run_gemini_video_analysis(target, ratio, voice_lang)
         
-        # ၂။ စာတန်းထိုး (၂ ကြောင်းခွဲစနစ်) နှင့် မြန်မာအသံဖိုင် ဖန်တီးခြင်း
-        audio_file, srt_file, _ = asyncio.run(
-            generate_myanmar_tts(clean_text, voice, speed, "tab3_voice.mp3")
+        # ၂။ စာတန်းထိုး ဘာသာစကားအတွက် သီးသန့် ဘာသာပြန်ခြင်း (အသံနှင့် စာတန်းထိုး မတူပါက)
+        subtitle_script = narration_script
+        need_sub_trans = False
+        if "Burmese" in voice_lang and sub_lang != "မြန်မာ (Burmese)":
+            need_sub_trans = True
+        elif "English" in voice_lang and sub_lang != "English":
+            need_sub_trans = True
+        elif "Thai" in voice_lang and sub_lang != "ไทย (Thai)":
+            need_sub_trans = True
+        elif "Chinese" in voice_lang and sub_lang != "中文 (Chinese)":
+            need_sub_trans = True
+
+        if need_sub_trans:
+            subtitle_script = translate_to_target_language(narration_script, sub_lang)
+
+        # ၃။ ရွေးချယ်ထားသော အသံ (ဥပမာ- မြန်မာအသံ) ဖြင့် MP3 ထုတ်လုပ်ခြင်း
+        voice_code = VOICES_BY_LANG[voice_lang].get(voice_label, list(VOICES_BY_LANG[voice_lang].values())[0])
+        audio_file = asyncio.run(
+            generate_tts_file(narration_script, voice_code, speed, "tab3_voice.mp3")
         )
 
-        # ၃။ Video + Blurred Background + 2-Line Subtitle + Audio ပေါင်းစပ်ထုတ်လုပ်ခြင်း
+        audio_dur = get_video_duration(audio_file)
+        srt_file, _ = generate_srt_and_zip(subtitle_script, total_target_duration=audio_dur, prefix="tab3_sub")
+
+        # ၄။ Video + Mask + Logo + Custom Language Subtitle ပေါင်းစပ်ပြီး အပြီးစီး ထုတ်ခြင်း
         final_video = render_advanced_clip(
             source_video=target,
             tts_audio=audio_file,
@@ -600,18 +771,33 @@ def tab3_auto_pipeline(
             scale_val=scale_val,
             x_off=x_off,
             y_off=y_off,
-            use_blur=use_blur,
+            use_blur_bg=use_blur_bg,
             bg_color=bg_color,
+            bright_val=bright_val,
+            contrast_val=contrast_val,
+            mask_enable=mask_enable,
+            mask_type=mask_type,
+            mask_color=mask_color,
+            mask_opacity=mask_opacity,
+            mask_w=mask_w,
+            mask_h=mask_h,
+            mask_x=mask_x,
+            mask_y=mask_y,
+            logo_file=logo_file,
+            logo_size=logo_size,
+            logo_x=logo_x,
+            logo_y=logo_y,
             font_family=font_family,
             font_size=font_size,
             font_color=font_color,
             outline_color=outline_color,
-            sub_pos=sub_pos,
+            sub_x=sub_x,
+            sub_y=sub_y,
             output_filename="final_movie_recap.mp4"
         )
 
-        status_msg = f"🎉 Video အပြီးစီး အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!\n🎬 Model: {model}\n{dur_msg}"
-        return final_video, final_video, clean_text, srt_file, status_msg
+        status_msg = f"🎉 Video အပြီးစီး အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!\n🎤 အသံ: {voice_lang}\n📝 စာတန်းထိုး: {sub_lang}\n🎬 Model: {model}\n{dur_msg}"
+        return final_video, final_video, subtitle_script, srt_file, status_msg
     except Exception as e:
         return None, None, "", None, f"❌ Error ဖြစ်ပေါ်ပါသည်: {str(e)}"
 
@@ -619,7 +805,7 @@ def tab3_auto_pipeline(
 # GRADIO UI
 # =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**All-in-One AI Movie Recap Studio: Script, Dubbing, Subtitles & Real-Time Sync**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**All-in-One Professional Multilingual Movie Recap Studio**")
 
     with gr.Tabs() as main_tabs:
         # --- API KEY TAB ---
@@ -661,7 +847,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         placeholder="မြန်မာစာ သို့မဟုတ် အင်္ဂလိပ်၊ ထိုင်း၊ တရုတ် စာသားများ ထည့်သွင်းနိုင်ပါသည်..."
                     )
                     v2_trans_btn = gr.Button("🌐 မြန်မာလို ပြန်ဆိုမည် (Eng/Thai/中文 → မြန်မာ)", variant="secondary")
-                    v2_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 အသံ ရွေးချယ်ပါ")
+                    v2_voice = gr.Dropdown(list(VOICES_BY_LANG["မြန်မာ (Burmese Voice)"].keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 အသံ ရွေးချယ်ပါ")
                     v2_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Speed (%)")
                     v2_btn = gr.Button("⚡ မြန်မာအသံဖိုင် ဖန်တီးမည်", variant="primary")
                     v2_status = gr.Markdown("")
@@ -673,9 +859,9 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v2_srt = gr.File(label="📄 SRT")
                 v2_zip = gr.File(label="📦 SRT ZIP")
 
-        # --- TAB 3: ONE-CLICK ADVANCED STUDIO ---
+        # --- TAB 3: ONE-CLICK ADVANCED MULTILINGUAL STUDIO ---
         with gr.TabItem("⚡ 3️⃣ One-Click All-in-One Video Studio", id="tab_auto"):
-            gr.Markdown("### 🎛️ Blurred Background & စာတန်းထိုး ၂ ကြောင်းစနစ်ပါဝင်သော One-Click Studio")
+            gr.Markdown("### 🎛️ မြန်မာအသံ + Eng/Thai/တရုတ် စာတန်းထိုး သီးခြားစိတ်ကြိုက်ရွေးချယ်နိုင်သော One-Click Studio")
             
             with gr.Row():
                 # LEFT COLUMN: SETTINGS
@@ -684,42 +870,88 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_url = gr.Textbox(label="🔗 Video Link (YouTube, TikTok, Facebook, RedNote စသည်)")
                     t3_load_btn = gr.Button("🔍 Video ရယူ/စစ်ဆေးမည်", variant="secondary")
 
-                    with gr.Accordion("🔊 အသံပိုင်းဆိုင်ရာ ထိန်းချုပ်မှုများ", open=True):
+                    with gr.Accordion("🎤 အသံပိုင်းဆိုင်ရာ & Voice ဘာသာစကား", open=True):
+                        t3_voice_lang = gr.Radio(
+                            list(VOICES_BY_LANG.keys()), 
+                            value="မြန်မာ (Burmese Voice)", 
+                            label="🎙️ ဇာတ်လမ်းပြောမည့် အသံ (Voice Language)"
+                        )
+                        t3_voice = gr.Dropdown(
+                            list(VOICES_BY_LANG["မြန်မာ (Burmese Voice)"].keys()), 
+                            value=list(VOICES_BY_LANG["မြန်မာ (Burmese Voice)"].keys())[0], 
+                            label="🎤 Voice ရွေးချယ်ပါ (သီဟ / နီလာ စသည်)"
+                        )
+                        t3_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Voice Speed (%)")
                         t3_orig_audio = gr.Checkbox(label="🔊 မူရင်း Video အသံ ဖွင့်မည် (Background အနေဖြင့်)", value=False)
                         t3_bgm_file = gr.Audio(label="🎵 Background Music (BGM) ထည့်ရန်", type="filepath")
                         t3_bgm_vol = gr.Slider(0.0, 1.0, value=0.15, step=0.05, label="🎚️ BGM အသံအတိုး/အလျှော့ (Volume)")
-                        t3_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 Voice ရွေးချယ်ပါ")
-                        t3_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Voice Speed (%)")
 
-                    with gr.Accordion("📐 Video ပုံစံ၊ အရွယ်အစားနှင့် နောက်ခံ ဝေဝါးမှု", open=True):
+                    with gr.Accordion("✍️ စာတန်းထိုး ဘာသာစကား (Eng / Thai / တရုတ် / မြန်မာ)", open=True):
+                        t3_sub_lang = gr.Radio(
+                            SUBTITLE_LANG_CHOICES, 
+                            value="English", 
+                            label="📝 Video ပေါ်တွင် ထိုးမည့် စာတန်းထိုး ဘာသာစကား (Subtitle Language)"
+                        )
+                        t3_font = gr.Dropdown(["Pyidaungsu", "Padauk", "Myanmar Text", "Arial", "sans-serif"], value="Pyidaungsu", label="🔤 Font ဒီဇိုင်း")
+                        t3_fsize = gr.Slider(14, 42, value=22, step=1, label="📏 စာလုံး အရွယ်အစား")
+                        with gr.Row():
+                            t3_fcolor = gr.ColorPicker(label="🎨 စာလုံးအရောင်", value="#00E676")
+                            t3_ocolor = gr.ColorPicker(label="🖌️ အနားသတ် အကြမ်းရောင် (Outline)", value="#000000")
+                        with gr.Row():
+                            t3_sub_x = gr.Slider(-200, 200, value=0, step=5, label="↔️ စာတန်းထိုး ဘယ်/ညာ ရွှေ့မည်")
+                            t3_sub_y = gr.Slider(-200, 200, value=0, step=5, label="↕️ စာတန်းထိုး အပေါ်/အောက် ရွှေ့မည်")
+
+                    with gr.Accordion("📐 Video ပုံစံ၊ အရွယ်အစားနှင့် အလင်းအမှောင် Filter", open=True):
                         t3_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="9:16", label="📐 Aspect Ratio ရွေးပါ")
-                        t3_blur = gr.Checkbox(label="🌫️ Background Blur (ဝေဝါးသော နောက်ခံ) အသုံးပြုမည်", value=True)
+                        t3_blur_bg = gr.Checkbox(label="🌫️ Background Blur (ဝေဝါးသော နောက်ခံ) အသုံးပြုမည်", value=True)
                         t3_flip = gr.Checkbox(label="🔄 ဗီဒီယို ဘယ်ညာလှန်မည် (Horizontal Flip)", value=False)
                         t3_scale = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="🔍 Video အကြီး/အသေး (Scale/Zoom)")
                         with gr.Row():
                             t3_x_off = gr.Slider(-200, 200, value=0, step=5, label="↔️ ဘယ်/ညာ ရွှေ့မည် (X-Offset)")
                             t3_y_off = gr.Slider(-200, 200, value=0, step=5, label="↕️ အပေါ်/အောက် ရွှေ့မည် (Y-Offset)")
-                        t3_bgcolor = gr.ColorPicker(label="🎨 Canvas/Background အရောင် (Blur ပိတ်ထားပါက အသုံးပြုရန်)", value="#000000")
-
-                    with gr.Accordion("✍️ စာတန်းထိုး ၂ ကြောင်း Fonts & ဒီဇိုင်း ချိန်ညှိမှု", open=True):
-                        t3_font = gr.Dropdown(["Pyidaungsu", "Padauk", "Myanmar Text", "Arial", "sans-serif"], value="Pyidaungsu", label="🔤 Font ဒီဇိုင်း")
-                        t3_sub_pos = gr.Radio(["အောက်ဘက်", "အပေါ်ဘက်"], value="အောက်ဘက်", label="📍 စာတန်းထိုး နေရာသတ်မှတ်ချက်")
-                        t3_fsize = gr.Slider(14, 38, value=22, step=1, label="📏 စာလုံး အရွယ်အစား")
                         with gr.Row():
-                            t3_fcolor = gr.ColorPicker(label="🎨 စာလုံးအရောင်", value="#FFF066") # ဓာတ်ပုံထဲကအတိုင်း ဝါနုရောင် default
-                            t3_ocolor = gr.ColorPicker(label="🖌️ အနားသတ် အကြမ်းရောင် (Outline)", value="#000000")
+                            t3_bright = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="☀️ အလင်းအမှောင် (Brightness)")
+                            t3_contrast = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="🌓 အနုအရင့် (Contrast)")
+                        t3_bgcolor = gr.ColorPicker(label="🎨 Background အရောင် (Blur ပိတ်ထားပါက အသုံးပြုရန်)", value="#000000")
+
+                    with gr.Accordion("🛡️ မူရင်းစာတန်းထိုး ဖုံးအုပ်မည့် Mask (Blur / Color Box)", open=False):
+                        t3_mask_enable = gr.Checkbox(label="✅ စာတန်းထိုး ဖုံးအုပ်မည့် Mask ဖွင့်မည်", value=True)
+                        t3_mask_type = gr.Radio(["Blur (ဝေဝါးဖုံး)", "Color Box (အရောင်အတုံးဖြင့်ဖုံး)"], value="Blur (ဝေဝါးဖုံး)", label="🎭 Mask ပုံစံ")
+                        with gr.Row():
+                            t3_mask_color = gr.ColorPicker(label="🎨 Mask အရောင်", value="#000000")
+                            t3_mask_opacity = gr.Slider(0.0, 1.0, value=0.85, step=0.05, label="💧 Opacity (အရောင် အတိုး/အလျှော့)")
+                        with gr.Row():
+                            t3_mask_w = gr.Slider(20, 100, value=85, step=1, label="↔️ Mask အကျယ် (%)")
+                            t3_mask_h = gr.Slider(20, 200, value=75, step=2, label="↕️ Mask အမြင့် (px)")
+                        with gr.Row():
+                            t3_mask_x = gr.Slider(-200, 200, value=0, step=5, label="↔️ Mask ဘယ်/ညာ ရွှေ့မည်")
+                            t3_mask_y = gr.Slider(-200, 200, value=0, step=5, label="↕️ Mask အပေါ်/အောက် ရွှေ့မည်")
+
+                    with gr.Accordion("🏷️ Logo တံဆိပ် ထည့်သွင်းခြင်း", open=False):
+                        t3_logo_file = gr.Image(label="🖼️ Logo ပုံတင်ရန် (PNG / JPG)", type="filepath")
+                        t3_logo_size = gr.Slider(40, 300, value=100, step=5, label="📏 Logo အရွယ်အစား (px)")
+                        with gr.Row():
+                            t3_logo_x = gr.Slider(-300, 300, value=0, step=5, label="↔️ Logo ဘယ်/ညာ ရွှေ့မည်")
+                            t3_logo_y = gr.Slider(-300, 300, value=0, step=5, label="↕️ Logo အပေါ်/အောက် ရွှေ့မည်")
 
                     t3_run_btn = gr.Button("✨ Video အပြီးစီး One-Click ထုတ်လုပ်မည်", variant="primary", size="lg")
 
                 # RIGHT COLUMN: REAL-TIME PREVIEW & FINAL VIDEO
                 with gr.Column(scale=1):
                     t3_preview_css = gr.HTML(
-                        get_tab3_preview_css("9:16", False, 1.0, 0, 0, True, "#000000", "Pyidaungsu", 22, "#FFF066", "#000000", "အောက်ဘက်")
+                        get_tab3_full_preview_html(
+                            "English",
+                            "9:16", False, 1.0, 0, 0, True, "#000000",
+                            1.0, 1.0,
+                            True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 75, 0, 0,
+                            None, 100, 0, 0,
+                            "Pyidaungsu", 22, "#00E676", "#000000", 0, 0
+                        )
                     )
-                    t3_live_video = gr.Video(label="📺 Real-Time Preview (နမူနာစာတန်းထိုး ၂ ကြောင်း)", elem_id="tab3_preview_box")
-                    t3_status = gr.Markdown("ဗီဒီယိုနှင့် စတိုင်လ်များကို စိတ်ကြိုက်ချိန်ညှိပြီး Preview တွင် ကြည့်ရှုနိုင်ပါသည်။")
+                    t3_live_video = gr.Video(label="📺 Real-Time Preview (ရွေးချယ်ထားသော စာတန်းထိုး နမူနာ)", elem_id="tab3_preview_box")
+                    t3_status = gr.Markdown("အသံကို မြန်မာ ထားပြီး စာတန်းထိုးကို Eng/Thai/တရုတ် စိတ်ကြိုက်ရွေးချယ်နိုင်ပါသည်။")
                     t3_final_video = gr.Video(label="🎬 အပြီးစီး Final Video Output (Playable)")
-                    t3_script_view = gr.Textbox(label="📝 ထွက်ရှိလာသော ဘာသာပြန် စာတန်းထိုး Script", lines=5)
+                    t3_script_view = gr.Textbox(label="📝 ထွက်ရှိလာသော စာတန်းထိုး Script", lines=5)
                     with gr.Row():
                         t3_download = gr.File(label="📥 Final Video ဒေါင်းလုဒ်")
                         t3_srt = gr.File(label="📄 SRT စာတန်းထိုး ဒေါင်းလုဒ်")
@@ -744,33 +976,43 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         outputs=[v2_input_text, v2_audio, v2_mp3, v2_srt, v2_zip, v2_status]
     )
 
+    # Tab 3 - Voice Language Change -> Update Voice Choices
+    t3_voice_lang.change(update_voice_choices, inputs=t3_voice_lang, outputs=t3_voice)
+
     # Tab 3 - Real-Time Preview Updates
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_live_video)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_live_video)
 
-    preview_inputs = [
-        t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
-        t3_blur, t3_bgcolor,
-        t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_pos
+    preview_all_inputs = [
+        t3_sub_lang,
+        t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off, t3_blur_bg, t3_bgcolor,
+        t3_bright, t3_contrast,
+        t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
+        t3_logo_file, t3_logo_size, t3_logo_x, t3_logo_y,
+        t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_x, t3_sub_y
     ]
-    for comp in preview_inputs:
-        comp.change(get_tab3_preview_css, inputs=preview_inputs, outputs=t3_preview_css)
+    for comp in preview_all_inputs:
+        comp.change(get_tab3_full_preview_html, inputs=preview_all_inputs, outputs=t3_preview_css)
 
     # Tab 3 - Generate Final One-Clip Video
     t3_run_btn.click(
         tab3_auto_pipeline,
         inputs=[
             t3_file, t3_url, t3_bgm_file,
+            t3_voice_lang, t3_voice, t3_speed,
+            t3_sub_lang,
             t3_orig_audio, t3_bgm_vol,
             t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
-            t3_blur, t3_bgcolor,
-            t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_pos,
-            t3_voice, t3_speed
+            t3_blur_bg, t3_bgcolor,
+            t3_bright, t3_contrast,
+            t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
+            t3_logo_file, t3_logo_size, t3_logo_x, t3_logo_y,
+            t3_font, t3_fsize, t3_fcolor, t3_ocolor, t3_sub_x, t3_sub_y
         ],
         outputs=[t3_final_video, t3_download, t3_script_view, t3_srt, t3_status]
     )
 
-# Render Server Port
+# Render Server Launch Port
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
