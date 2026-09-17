@@ -1,10 +1,3 @@
-ပေးပို့ထားတဲ့ Code ထဲမှာ အောက်ပါ အမှား (၃) ချက် ကျန်ရှိနေတာကို တွေ့ရပါသည်-
- * SyntaxError အမှား: Code ရဲ့ အောက်ဆုံးမှာ မြန်မာစာသား Tab.3 မှာ video crop လုပ်တဲ့နေမှာ ... ဆိုတာ ပါနေလို့ Python က Run ရင် syntax error ချက်ချင်းတက်ပါမည်။
- * Crop လုပ်သည့်နေရာတွင် အဖြူရောင်မဖြစ်စေဘဲ ဘယ်/ညာ၊ အပေါ်/အောက် ညီတူညီမျှ ဖြတ်တောက်ပြီး Blur/Color ဖြည့်ပေးခြင်း:
-   * ဘယ်နှင့် ညာ (X-axis) ညီတူ၊ အပေါ်နှင့် အောက် (Y-axis) ညီတူ ဖြတ်ထုတ်ရန် Slider တပ်ဆင်ထားပါသည်။
-   * ဖြတ်ထုတ်လိုက်သော ဘေးဘောင်နေရာများတွင် အဖြူရောင် လုံးဝ မပေါ်စေဘဲ မိမိရွေးချယ်ထားသော Blur (ဝေဝါးသော နောက်ခံ) သို့မဟုတ် Color Picker မှ အရောင်စုံ အလိုအလျောက် ဖြည့်စွက်ပေးမည့် Dual-Layer Canvas ကို Preview ရော FFmpeg Render မှာပါ တပြေးညီ ချိတ်ဆက်ပေးထားပါသည်။
- * Parameter mismatch အမှား: tab3_auto_pipeline ထဲတွင် crop_fill_mode, crop_fill_color တို့ကို FFmpeg ရဲ့ render_advanced_clip ထဲသို့ မပို့မိဘဲ ကျန်ခဲ့သည့်အတွက် Final Render ထုတ်သည့်အခါ Argument Error တက်နိုင်သည့် အမှားကို ပြင်ဆင်ပေးထားပါသည်။
-စစ်ဆေးပြင်ဆင်ပြီးစီးထားသော app.py Code အပြည့်အစုံ ဖြစ်ပါသည်-
 import os
 import re
 import time
@@ -1038,4 +1031,3 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
-
