@@ -325,7 +325,7 @@ async def generate_tts_file(text, voice_code, speed_percent, output_name="output
     return output_name
 
 # =========================================================
-# CSS & REAL-TIME PREVIEW ENGINE (ONLY INSIDE PREVIEW)
+# CSS & REAL-TIME PREVIEW ENGINE (INSTANT & DYNAMIC)
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -385,7 +385,6 @@ def get_tab3_full_preview_html(
     cfg = configs.get(ratio, configs["9:16"])
     flip_x = "-1" if flip_h else "1"
 
-    # Blur Mask Overlay (Live inside Preview Screen)
     mask_html = ""
     if mask_enable:
         mask_bg = hex_to_rgba(mask_color, mask_opacity)
@@ -407,7 +406,6 @@ def get_tab3_full_preview_html(
         "></div>
         """
 
-    # Circular Logo Overlay (Live inside Preview Screen)
     logo_html = ""
     if logo_file:
         try:
@@ -434,7 +432,6 @@ def get_tab3_full_preview_html(
         except Exception:
             pass
 
-    # Subtitles Overlay (Live only inside Preview Screen)
     if sub_lang == "English":
         sample_l1 = "Cinematic Movie Recap Subtitle"
         sample_l2 = "( Live Screen Subtitle Preview )"
@@ -687,7 +684,7 @@ def render_advanced_clip(
     return output_filename
 
 # =========================================================
-# CONTROLLER LOGIC
+# CONTROLLER LOGIC (WITH FAST SCRIPT GENERATION FOR TAB 2)
 # =========================================================
 def tab1_analyze(v_file, v_url, ratio):
     target = v_file if v_file else download_video_from_link(v_url)
@@ -700,6 +697,38 @@ def tab1_analyze(v_file, v_url, ratio):
         return clean_text, clean_text, status, srt, zip_f
     except Exception as e:
         return "", "", f"❌ Error: {str(e)}", None, None
+
+def fast_video_to_script_tab2(v_file, v_url):
+    """Tab 2 တွင် ဗီဒီယိုဖိုင် သို့မဟုတ် Link မှတဆင့် Script ကို အမြန်ဆုံးထုတ်ယူပေးရန်"""
+    target = v_file if v_file else download_video_from_link(v_url)
+    if not target or not os.path.exists(target):
+        return "", "⚠️ ဗီဒီယိုဖိုင် သို့မဟုတ် Link မရှိပါ။ ဖိုင် အရင်ထည့်ပါ။"
+    try:
+        # Fast & Optimized Prompt for Tab 2
+        global SAVED_API_KEY
+        if not SAVED_API_KEY:
+            return "", "⚠️ Gemini API Key လိုအပ်ပါသည်။ API Key Setting တွင် အရင်ထည့်ပါ။"
+        
+        client = genai.Client(api_key=SAVED_API_KEY)
+        uploaded_file = client.files.upload(file=target)
+        
+        # Wait for active
+        while True:
+            if uploaded_file.state and uploaded_file.state.name == "ACTIVE":
+                break
+            if uploaded_file.state and uploaded_file.state.name == "FAILED":
+                return "", "❌ Video processing failed on Gemini server."
+            time.sleep(2)
+            uploaded_file = client.files.get(name=uploaded_file.name)
+
+        prompt = "Write a fast, engaging movie recap narration script in Burmese based on this video. No tags. Just natural conversational script."
+        res = client.models.generate_content(model="gemini-2.5-flash", contents=[uploaded_file, prompt])
+        if res and res.text:
+            cleaned = clean_script_for_tts(res.text)
+            return cleaned, "✅ ဗီဒီယိုမှ Script ကို အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!"
+    except Exception as e:
+        return "", f"❌ Script Generation Error: {str(e)}"
+    return "", "❌ Unknown Error"
 
 def handle_direct_translate(text):
     if not text or not text.strip():
@@ -849,13 +878,18 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v1_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
                 v1_zip = gr.File(label="📦 SRT ZIP ဒေါင်းလုဒ်")
 
-        # --- TAB 2: TTS ---
-        with gr.TabItem("2️⃣ Text-to-Speech", id="tab_tts"):
+        # --- TAB 2: TTS & FAST SCRIPT ---
+        with gr.TabItem("2️⃣ Text-to-Speech & Fast Script", id="tab_tts"):
+            gr.Markdown("### ⚡ Video မှ Script ကို အမြန်ဆုံးထုတ်ယူပြီး အသံဖိုင်ပြောင်းလဲရန်")
             with gr.Row():
                 with gr.Column(scale=1):
+                    v2_vid_file = gr.Video(label="📹 Video File တင်ရန် (Tab 2 အတွက်)")
+                    v2_vid_url = gr.Textbox(label="🔗 Video URL Link")
+                    v2_fast_script_btn = gr.Button("🚀 ဗီဒီယိုမှ Script အမြန်ထုတ်မည်", variant="secondary")
+                    
                     v2_input_text = gr.Textbox(
                         label="🎙️ Movie Script (အင်္ဂလိပ်၊ ထိုင်း၊ တရုတ် စာသားများ ထည့်ပါက အလိုအလျောက် မြန်မာပြန်ပေးပါမည်)",
-                        lines=12,
+                        lines=10,
                         placeholder="မြန်မာစာ သို့မဟုတ် အင်္ဂလိပ်၊ ထိုင်း၊ တရုတ် စာသားများ ထည့်သွင်းနိုင်ပါသည်..."
                     )
                     v2_trans_btn = gr.Button("🌐 မြန်မာလို ပြန်ဆိုမည် (Eng/Thai/中文 → မြန်မာ)", variant="secondary")
@@ -966,7 +1000,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         t3_srt = gr.File(label="📄 SRT စာတန်းထိုး ဒေါင်းလုဒ်")
 
     # ================= EVENT BINDINGS (INSTANT PREVIEW & QUEUE SAFE) =================
-    # Tab 1: Video တင်လိုက်တာနဲ့ Preview မှာ ချက်ချင်းတန်းပေါ်အောင် ချိတ်ဆက်မှု
+    # Tab 1
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
@@ -977,7 +1011,8 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     )
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
-    # Tab 2
+    # Tab 2 (Fast Script + TTS)
+    v2_fast_script_btn.click(fast_video_to_script_tab2, inputs=[v2_vid_file, v2_vid_url], outputs=[v2_input_text, v2_status])
     v2_trans_btn.click(handle_direct_translate, inputs=v2_input_text, outputs=[v2_input_text, v2_status])
     v2_btn.click(
         tab2_tts_with_auto_translate,
@@ -988,11 +1023,11 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     # Tab 3 - Voice Selection
     t3_voice_lang.change(update_voice_choices, inputs=t3_voice_lang, outputs=t3_voice)
 
-    # Tab 3: Video File တင်လိုက်တာနဲ့ / Link ယူလိုက်တာနဲ့ Preview တွင် ချက်ချင်းတန်းပေါ်အောင် ချိတ်ဆက်မှု
+    # Tab 3: Video File ထည့်လိုက်တာနဲ့ Preview မှာ ချက်ချင်းတန်းပေါ်စေရန် ချိတ်ဆက်မှု
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_live_video)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_live_video)
 
-    # Tab 3 - Preview Updates (Only Inside Video Container)
+    # Tab 3 - Preview Updates
     preview_all_inputs = [
         t3_sub_lang, t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
         t3_crop_w, t3_crop_h, t3_blur_bg, t3_bgcolor, t3_bright, t3_contrast,
@@ -1021,7 +1056,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         outputs=[t3_final_video, t3_download, t3_script_view, t3_srt, t3_status]
     )
 
-# Render Server Launch (Queue enabled to completely eliminate HTTP 502 Timeout/Crashes)
+# Server Launch with Queue enabled to completely prevent HTTP 502 Bad Gateway timeouts
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.queue(default_concurrency_limit=5).launch(
