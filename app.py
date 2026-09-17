@@ -7,6 +7,10 @@ import asyncio
 import uuid
 import shutil
 from pathlib import Path
+
+# Python Default Encoding ကို UTF-8 သို့ အတင်းအကျပ် ချိတ်ဆက်ခြင်း (ASCII Error တားဆီးရန်)
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
 import gradio as gr
 import edge_tts
 import yt_dlp
@@ -20,9 +24,9 @@ MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 GEMINI_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-1.5-flash",
 ]
 
 VOICES = {
@@ -40,12 +44,17 @@ def unique_file(prefix, ext):
     return str(BASE_DIR / f"{prefix}_{uuid.uuid4().hex[:10]}{ext}")
 
 def sanitize_video_path(input_path):
+    """
+    ဖိုင်နာမည်တွင် မြန်မာစာ သို့မဟုတ် Non-ASCII စာလုံးများပါပါက 
+    ASCII သက်သက်ပါသော နာမည်သစ်ဖြင့် ယာယီကူးယူပေးပြီး Error မတက်အောင် ပြုလုပ်ပေးသည်။
+    """
     if not input_path or not os.path.exists(input_path):
         return None
     try:
         ext = os.path.splitext(input_path)[1]
         if not ext:
             ext = ".mp4"
+        # လုံးဝ ရိုးရှင်းသော English နာမည်သစ်ဖြင့်သာ Workspace ထဲ သိမ်းမည်
         safe_path = str(BASE_DIR / f"clean_video_{uuid.uuid4().hex[:8]}{ext}")
         shutil.copy2(input_path, safe_path)
         return safe_path
@@ -242,9 +251,10 @@ def run_gemini_video_analysis(target_media, ratio_choice):
         raise ValueError(msg)
 
     client = genai.Client(api_key=SAVED_API_KEY)
+    
+    # ⚠️ အဓိက ပြင်ဆင်ချက်: ဖိုင်နာမည်တွင် ASCII သက်သက် (video_input.mp4) ဖြစ်အောင် Sanitize လုပ်ပြီးမှ ပို့မည်
     safe_target = sanitize_video_path(target_media)
     
-    # ⚠️ အဓိက ပြင်ဆင်ချက်: display_name ကို ASCII သက်သက် (video_input.mp4) ပေးပို့ခြင်းဖြင့် Unicode/ASCII Error ကို ဖြေရှင်းခြင်း
     uploaded_file = client.files.upload(
         file=safe_target,
         config={"display_name": "video_input.mp4"}
