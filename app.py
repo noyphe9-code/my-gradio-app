@@ -7,6 +7,9 @@ import zipfile
 import subprocess
 import asyncio
 import base64
+import shutil
+import tempfile
+import uuid
 import gradio as gr
 
 # Burmese/Thai/Chinese output must never fall back to ASCII.
@@ -74,6 +77,22 @@ def safe_error(exc):
         return str(exc).encode("utf-8", "replace").decode("utf-8", "replace")
     except Exception:
         return repr(exc)
+
+def make_ascii_upload_copy(video_path):
+    """Copy media to an ASCII-only filename before google-genai upload.
+
+    google-genai/httpx can place the local filename in a multipart header and
+    its header encoder may default to ASCII. Burmese/Thai/Chinese filenames
+    therefore fail before the request reaches Gemini.
+    """
+    source = as_filepath(video_path)
+    if not source:
+        raise FileNotFoundError("Video file မတွေ့ပါ။")
+    ext = os.path.splitext(source)[1].lower() or ".mp4"
+    safe_name = f"gemini_upload_{uuid.uuid4().hex}{ext}"
+    destination = os.path.join(tempfile.gettempdir(), safe_name)
+    shutil.copyfile(source, destination)
+    return destination
 
 def save_api_key(api_key):
     global SAVED_API_KEY
@@ -224,7 +243,8 @@ def validate_video_duration(video_path):
         return False, f"⚠️ Video သည် {minutes:.1f} မိနစ်ရှိပါသည်။ အများဆုံး {MAX_VIDEO_MINUTES} မိနစ်အထိသာ လက်ခံပါသည်။"
     return True, f"✅ Video Length: {minutes:.1f} မိနစ်"
 
-def clean_script_for_tts(script_text):
+def clean_script_for_display(script_text):
+    """Clean model formatting while preserving speaker labels for the script."""
     if not script_text:
         return ""
     cleaned = []
@@ -234,10 +254,26 @@ def clean_script_for_tts(script_text):
             continue
         line = line.replace("**", "").replace("__", "").replace("`", "")
         line = re.sub(r"^\s*\[(?:Visual|Scene|Video|Audio|Camera|Action|Narration|Narrator|Dialogue|Intro)\]\s*[:\-]?\s*", "", line, flags=re.IGNORECASE)
-        line = re.sub(r"^\s*Narrator\s*:\s*", "", line, flags=re.IGNORECASE)
         if line.lower() in ["movie recap", "recap script", "burmese recap script", "script"] or line.startswith("---"):
             continue
         cleaned.append(line.strip())
+    return "\n".join(cleaned)
+
+def clean_script_for_tts(script_text):
+    """Remove non-spoken speaker labels but keep every narration/dialogue line."""
+    text = clean_script_for_display(script_text)
+    if not text:
+        return ""
+    cleaned = []
+    for line in text.splitlines():
+        line = re.sub(
+            r"^\s*(?:Narrator|Narration|Voice[- ]?over|ဇာတ်ညွှန်း|ဇာတ်ကောင်\s*[^:：]{0,40}|Character\s*[^:：]{0,40}|[A-Za-z][A-Za-z0-9 _-]{0,30})\s*[:：-]\s*",
+            "",
+            line,
+            flags=re.IGNORECASE,
+        ).strip()
+        if line:
+            cleaned.append(line)
     return "\n".join(cleaned)
 
 def split_into_two_lines(text, max_line_len=20):
@@ -632,7 +668,7 @@ def build_recap_prompt(selected_ratio, voice_language, video_duration=None):
         dur_guidance = f"\nVideo Length: {video_duration:.1f} seconds. Keep the recap length strictly balanced."
 
     lang_instructions = {
-        "မြန်မာ (Burmese Voice)": "မြန်မာ Movie Recap Script အဖြစ် မြန်မာစာလုံးပေါင်း သတ်ပုံတိကျစွာ သဘာဝကျကျ ရေးသားပေးပါ။",
+        "မြန်မာ (Burmese Voice)": "မြန်မာ Movie Recap Script အဖြစ် မြန်မာစာလုံးပေါင်း သတ်ပုံတိကျစွာ၊ နားထောင်ရသဘာဝကျကျ ရေးသားပေးပါ။",
         "English Voice": "Write an engaging, fluent English Movie Recap Script suitable for viral video narration.",
         "ไทย (Thai Voice)": "เขียนบทพากย์สรุปหนังภาษาไทย (Thai Movie Recap Script) ที่น่าสนใจ ถูกต้องตามไวยากรณ์ และกระชับชัดเจน",
         "中文 (Chinese Voice)": "写出地道、流畅的中文电影解说旁白文案，语句紧凑生动。"
@@ -641,15 +677,29 @@ def build_recap_prompt(selected_ratio, voice_language, video_duration=None):
     instruction = lang_instructions.get(voice_language, lang_instructions["မြန်မာ (Burmese Voice)"])
 
     return f"""
-You are an expert Professional Movie Recap Scriptwriter.
+You are an expert movie recap writer and scene-by-scene visual storyteller.
 Target Aspect Ratio = {selected_ratio}{dur_guidance}
 Target Narration Voice Language = {voice_language}
 
-Instructions:
+Write a complete beginning-to-end recap based ONLY on what is visible or audible in the video.
+Do not skip the opening, transitions, important reactions, turning points, climax, or ending.
+The result must feel exciting and natural for TikTok, Facebook Reels, and YouTube viewers.
+
+Required writing style:
 1. {instruction}
-2. Accurately capture what happens in the video with fluent storytelling.
-3. Do NOT include any technical tags like [Visual], [Scene], [Narrator], [Dialogue], or timestamps.
-4. Keep sentences rhythmic and concise for smooth TTS synthesis.
+2. Follow the video's exact chronological order. Describe visual actions, locations, facial expressions,
+   emotions, suspense, and cause-and-effect in a vivid but concise way so the listener can imagine every shot.
+3. Include both narrator voice-over and character-to-character conversations whenever dialogue is audible.
+   Preserve the meaning of audible dialogue accurately; do not invent conversations that cannot be heard or inferred.
+4. Use this exact readable format, one speaker per paragraph:
+   Narrator: [natural Burmese narration]
+   Character 1: [what the character says]
+   Character 2: [reply]
+   Use a short descriptive speaker name when clearly identifiable (for example, မင်းသား၊ မင်းသမီး၊ အမျိုးသား၊ အမျိုးသမီး).
+5. Narrator lines should connect scenes smoothly and create curiosity. Character lines should sound like natural spoken Burmese,
+   not a literal translation. Keep the pacing engaging, with a strong hook in the opening and a satisfying ending.
+6. Do not output markdown, bullet points, scene numbers, timestamps, camera/visual/audio tags, or production instructions.
+7. Do not claim names, motives, events, or dialogue that are not supported by the video. If speech is unclear, narrate the visible action instead.
 """
 
 def generate_with_retry(client, uploaded_file, prompt):
@@ -681,7 +731,16 @@ def run_gemini_video_analysis(target_media, ratio_choice, voice_language="မြ
         raise ValueError(msg)
 
     client = genai.Client(api_key=SAVED_API_KEY)
-    uploaded_file = client.files.upload(file=target_media)
+    # Do not pass the Gradio/original path directly: its filename may contain
+    # Burmese characters and trigger httpx's ASCII header encoding error.
+    upload_path = make_ascii_upload_copy(target_media)
+    try:
+        uploaded_file = client.files.upload(file=upload_path)
+    finally:
+        try:
+            os.remove(upload_path)
+        except OSError:
+            pass
     
     start_wait = time.time()
     while True:
@@ -697,8 +756,8 @@ def run_gemini_video_analysis(target_media, ratio_choice, voice_language="မြ
     v_dur = get_video_duration(target_media)
     prompt = build_recap_prompt(ratio_choice, voice_language, v_dur)
     script_text, used_model = generate_with_retry(client, uploaded_file, prompt)
-    clean_text = clean_script_for_tts(script_text)
-    return clean_text, used_model, msg
+    script_text = clean_script_for_display(script_text)
+    return script_text, used_model, msg
 
 # =========================================================
 # TTS LOGIC
