@@ -8,7 +8,7 @@ import uuid
 import shutil
 from pathlib import Path
 
-# Python Default Encoding ကို UTF-8 သို့ အတင်းအကျပ် ချိတ်ဆက်ခြင်း (ASCII Error တားဆီးရန်)
+# Python Default Encoding ကို UTF-8 သို့ အတင်းအကျပ် ချိတ်ဆက်ခြင်း
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
 import gradio as gr
@@ -45,8 +45,8 @@ def unique_file(prefix, ext):
 
 def sanitize_video_path(input_path):
     """
-    ဖိုင်နာမည်တွင် မြန်မာစာ သို့မဟုတ် Non-ASCII စာလုံးများပါပါက 
-    ASCII သက်သက်ပါသော နာမည်သစ်ဖြင့် ယာယီကူးယူပေးပြီး Error မတက်အောင် ပြုလုပ်ပေးသည်။
+    ဖိုင်လမ်းကြောင်းနှင့် နာမည်တွင် Non-ASCII (မြန်မာ၊ တရုတ် စသည်) များ ပါဝင်ပါက
+    ASCII သက်သက်ဖြင့် လုံးဝသန့်စင်ထားသော ယာယီဖိုင်အဖြစ် ပြောင်းလဲပေးသည်။
     """
     if not input_path or not os.path.exists(input_path):
         return None
@@ -54,8 +54,12 @@ def sanitize_video_path(input_path):
         ext = os.path.splitext(input_path)[1]
         if not ext:
             ext = ".mp4"
-        # လုံးဝ ရိုးရှင်းသော English နာမည်သစ်ဖြင့်သာ Workspace ထဲ သိမ်းမည်
-        safe_path = str(BASE_DIR / f"clean_video_{uuid.uuid4().hex[:8]}{ext}")
+        
+        # လုံးဝ ရိုးရှင်းသော ASCII နာမည်သစ် သတ်မှတ်ခြင်း
+        safe_filename = f"safe_{uuid.uuid4().hex[:6]}{ext}"
+        safe_path = str(BASE_DIR / safe_filename)
+        
+        # ဖိုင်ကို ကူးယူခြင်း
         shutil.copy2(input_path, safe_path)
         return safe_path
     except Exception as e:
@@ -252,13 +256,15 @@ def run_gemini_video_analysis(target_media, ratio_choice):
 
     client = genai.Client(api_key=SAVED_API_KEY)
     
-    # ⚠️ အဓိက ပြင်ဆင်ချက်: ဖိုင်နာမည်တွင် ASCII သက်သက် (video_input.mp4) ဖြစ်အောင် Sanitize လုပ်ပြီးမှ ပို့မည်
+    # ⚠️ အဓိက ပြင်ဆင်ချက်: ဖိုင်ကို သန့်စင်ပြီးသား Path မှနေ၍ Open လုပ်ကာ 
+    # Binary File Object အနေဖြင့် လုံးဝအမှားအယွင်းကင်းသော 'video.mp4' နာမည်တုဖြင့် ပို့ပေးခြင်း
     safe_target = sanitize_video_path(target_media)
     
-    uploaded_file = client.files.upload(
-        file=safe_target,
-        config={"display_name": "video_input.mp4"}
-    )
+    with open(safe_target, "rb") as f:
+        uploaded_file = client.files.upload(
+            file=f,
+            config={"mime_type": "video/mp4", "display_name": "video.mp4"}
+        )
     
     start_wait = time.time()
     while True:
