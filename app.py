@@ -287,6 +287,7 @@ def get_tab3_full_preview_html(
     sub_lang,
     ratio, flip_h, scale_val, x_off, y_off,
     crop_w_pct, crop_h_pct,
+    crop_fill_mode, crop_fill_color,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
@@ -403,10 +404,29 @@ def get_tab3_full_preview_html(
     </div>
     """
 
-    # Video Clip-path for Crop Preview
-    inset_x = (100 - crop_w_pct) / 2
-    inset_y = (100 - crop_h_pct) / 2
+    # Crop is always symmetric: the same amount is removed from both
+    # left/right and both top/bottom. The removed area is filled instead of
+    # exposing the browser's default white background.
+    inset_x = max(0.0, min(49.0, (100 - float(crop_w_pct)) / 2))
+    inset_y = max(0.0, min(49.0, (100 - float(crop_h_pct)) / 2))
     clip_style = f"clip-path: inset({inset_y:.1f}% {inset_x:.1f}% {inset_y:.1f}% {inset_x:.1f}%);"
+    fill_css = (
+        "backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); "
+        "background: rgba(0,0,0,0.12);"
+        if crop_fill_mode == "Blur (ဝေဝါးဖြည့်)"
+        else f"background: {crop_fill_color};"
+    )
+    crop_fill_html = f"""
+    <div id="tab3_crop_fill" style="
+        position:absolute; inset:0; z-index:1; pointer-events:none;
+        overflow:hidden; border-radius:14px;
+    ">
+        <div style="position:absolute; left:0; right:0; top:0; height:{inset_y:.1f}%; {fill_css}"></div>
+        <div style="position:absolute; left:0; right:0; bottom:0; height:{inset_y:.1f}%; {fill_css}"></div>
+        <div style="position:absolute; left:0; top:{inset_y:.1f}%; bottom:{inset_y:.1f}%; width:{inset_x:.1f}%; {fill_css}"></div>
+        <div style="position:absolute; right:0; top:{inset_y:.1f}%; bottom:{inset_y:.1f}%; width:{inset_x:.1f}%; {fill_css}"></div>
+    </div>
+    """
 
     return f"""
     <style id="tab3-live-preview-style">
@@ -773,6 +793,7 @@ def tab3_auto_pipeline(
     enable_orig_audio, bgm_vol,
     ratio, flip_h, scale_val, x_off, y_off,
     crop_w, crop_h,
+    crop_fill_mode, crop_fill_color,
     use_blur_bg, bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
@@ -960,7 +981,16 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         t3_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="9:16", label="📐 Aspect Ratio ရွေးပါ")
                         with gr.Row():
                             t3_crop_w = gr.Slider(30, 100, value=100, step=1, label="✂️ ဘယ်/ညာ Crop အကျယ် (%)")
-                            t3_crop_h = gr.Slider(30, 100, value=100, step=1, label="✂️ အပေါ်/အောက် Crop အမြင့် (%)")
+                            t3_crop_h = gr.Slider(30, 100, value=100, step=1, label="✂️ အပေါ်/အောက် Crop အမြင့် (%) — အပေါ်/အောက် နှစ်ဖက်တူညီ")
+                        t3_crop_fill_mode = gr.Radio(
+                            ["Blur (ဝေဝါးဖြည့်)", "Color (အရောင်ဖြည့်)"],
+                            value="Blur (ဝေဝါးဖြည့်)",
+                            label="🧩 Crop ဖြတ်ထားတဲ့နေရာ ဖြည့်ပုံ"
+                        )
+                        t3_crop_fill_color = gr.ColorPicker(
+                            label="🎨 Crop နေရာဖြည့်မည့်အရောင်",
+                            value="#202020"
+                        )
                         t3_scale = gr.Slider(0.5, 2.5, value=1.0, step=0.05, label="🔍 Video Zoom အကြီး/အသေး")
                         t3_flip = gr.Checkbox(label="🔄 ဗီဒီယို ဘယ်ညာလှန်မည် (Horizontal Flip)", value=False)
                         with gr.Row():
@@ -1054,6 +1084,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         t3_sub_lang,
         t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
         t3_crop_w, t3_crop_h,
+        t3_crop_fill_mode, t3_crop_fill_color,
         t3_blur_bg, t3_bgcolor,
         t3_bright, t3_contrast,
         t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
@@ -1073,6 +1104,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             t3_orig_audio, t3_bgm_vol,
             t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
             t3_crop_w, t3_crop_h,
+            t3_crop_fill_mode, t3_crop_fill_color,
             t3_blur_bg, t3_bgcolor,
             t3_bright, t3_contrast,
             t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
