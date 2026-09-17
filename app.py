@@ -65,7 +65,7 @@ def save_api_key(api_key):
 
 def get_video_duration(video_path):
     if not video_path or not os.path.exists(video_path):
-        return None
+        return 0.0
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
@@ -78,10 +78,9 @@ def get_video_duration(video_path):
             return float(result.stdout.strip())
     except Exception as e:
         print("Duration Error:", e)
-    return None
+    return 0.0
 
 def has_audio_stream(video_path):
-    """ဗီဒီယိုထဲတွင် အသံပါမပါ စစ်ဆေးခြင်း (Silent Video Error ကာကွယ်ရန်)"""
     if not video_path or not os.path.exists(video_path):
         return False
     try:
@@ -98,11 +97,11 @@ def has_audio_stream(video_path):
 
 def validate_video_duration(video_path):
     duration = get_video_duration(video_path)
-    if duration is None:
-        return True, "ℹ️ Video duration ကို စစ်ဆေးနေပါသည်..."
+    if duration <= 0:
+        return True, "ℹ️ Video duration စစ်ဆေးပြီးပါပြီ။"
     minutes = duration / 60
     if minutes > MAX_VIDEO_MINUTES:
-        return False, f"⚠️ Video သည် {minutes:.1f} မိနစ်ရှိပါသည်။ အများဆုံး {MAX_VIDEO_MINUTES} မိနစ်အထိသာ လက်ခံပါသည်။"
+        return False, f"⚠️ Video သည် {minutes:.1f} မိနစ်ရှိပါသည်။ အများဆုံး {MAX_VIDEO_MINUTES} မိနစ်အထိသာ ခွင့်ပြုထားပါသည်။"
     return True, f"✅ Video Length: {minutes:.1f} မိနစ်"
 
 def clean_script_for_tts(script_text):
@@ -223,9 +222,7 @@ def download_video_from_link(link):
 def has_foreign_text(text):
     if not text:
         return False
-    if re.search(r"[a-zA-Z]{3,}", text) or re.search(r"[\u0E00-\u0E7F]", text) or re.search(r"[\u4E00-\u9FFF]", text):
-        return True
-    return False
+    return bool(re.search(r"[a-zA-Z]{3,}", text) or re.search(r"[\u0E00-\u0E7F]", text) or re.search(r"[\u4E00-\u9FFF]", text))
 
 def translate_to_target_language(text, target_lang):
     global SAVED_API_KEY
@@ -236,7 +233,6 @@ def translate_to_target_language(text, target_lang):
 
     client = genai.Client(api_key=SAVED_API_KEY)
     prompt = f"""
-You are an expert movie subtitle translator.
 Translate the following movie recap lines into {target_lang} for clean cinematic subtitles.
 Keep each line concise, natural, and accurately mapped to storytelling tone.
 Output ONLY the translated lines without any markdown formatting or commentary.
@@ -257,9 +253,7 @@ Text:
     return text
 
 def build_recap_prompt(selected_ratio, voice_language, video_duration=None):
-    dur_guidance = ""
-    if video_duration:
-        dur_guidance = f"\nVideo Duration: {video_duration:.1f} seconds. Balance narration timing accurately."
+    dur_guidance = f"\nVideo Duration: {video_duration:.1f} seconds. Balance narration timing accurately." if video_duration else ""
 
     return f"""
 မင်းက Video Editing, AI Scripting နဲ့ Automation လုပ်ငန်းစဉ်တွေကို ကျွမ်းကျင်တဲ့ "Advanced AI Video Recap Generator" ဖြစ်သည်။
@@ -293,7 +287,7 @@ def run_gemini_video_analysis(target_media, ratio_choice, voice_language="မြ
             break
         if uploaded_file.state and uploaded_file.state.name == "FAILED":
             raise RuntimeError("Gemini Video Processing မအောင်မြင်ပါ။ ဗီဒီယိုဖိုင်ကို စစ်ဆေးပါ။")
-        if time.time() - start_wait > 900:
+        if time.time() - start_wait > 600:
             raise TimeoutError("Gemini Video Processing ကြာမြင့်လွန်းနေပါသည်။")
         time.sleep(3)
         uploaded_file = client.files.get(name=uploaded_file.name)
@@ -303,7 +297,7 @@ def run_gemini_video_analysis(target_media, ratio_choice, voice_language="မြ
 
     last_error = None
     for model_name in GEMINI_MODELS:
-        for attempt in range(2):
+        for _ in range(2):
             try:
                 response = client.models.generate_content(
                     model=model_name,
@@ -314,7 +308,7 @@ def run_gemini_video_analysis(target_media, ratio_choice, voice_language="မြ
                     return clean_text, model_name, msg
             except Exception as e:
                 last_error = e
-                time.sleep(3)
+                time.sleep(2)
 
     raise RuntimeError(f"Gemini စာသားထုတ်လုပ်မှု မအောင်မြင်ပါ။ အသေးစိတ်: {last_error}")
 
@@ -391,7 +385,7 @@ def get_tab3_full_preview_html(
     cfg = configs.get(ratio, configs["9:16"])
     flip_x = "-1" if flip_h else "1"
 
-    # Blur Mask Overlay (Live in Preview Container)
+    # Blur Mask Overlay (Live inside Preview Screen)
     mask_html = ""
     if mask_enable:
         mask_bg = hex_to_rgba(mask_color, mask_opacity)
@@ -413,7 +407,7 @@ def get_tab3_full_preview_html(
         "></div>
         """
 
-    # Circular Logo Overlay (Live in Preview Container)
+    # Circular Logo Overlay (Live inside Preview Screen)
     logo_html = ""
     if logo_file:
         try:
@@ -440,7 +434,7 @@ def get_tab3_full_preview_html(
         except Exception:
             pass
 
-    # Live Subtitle Overlay (Live in Preview Container)
+    # Subtitles Overlay (Live only inside Preview Screen)
     if sub_lang == "English":
         sample_l1 = "Cinematic Movie Recap Subtitle"
         sample_l2 = "( Live Screen Subtitle Preview )"
@@ -538,7 +532,7 @@ def get_tab3_full_preview_html(
     """
 
 # =========================================================
-# FFMPEG COMPOSER & AUTO-SYNC ENGINE
+# FFMPEG COMPOSER
 # =========================================================
 def hex_to_ass_color(hex_str):
     hex_str = hex_str.lstrip("#")
@@ -583,7 +577,6 @@ def render_advanced_clip(
 
     current_v = "v_base"
 
-    # Blur Mask Overlay
     if mask_enable:
         mw = int(tw * (mask_w / 100.0))
         mh = int(mask_h * (th / 1920.0 * 2.0))
@@ -604,7 +597,6 @@ def render_advanced_clip(
             )
         current_v = "v_masked"
 
-    # Circular Logo Overlay
     inputs_cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio]
     next_input_idx = 2
 
@@ -621,7 +613,6 @@ def render_advanced_clip(
         )
         current_v = "v_logoed"
 
-    # Subtitles Overlay
     primary_ass = hex_to_ass_color(font_color)
     outline_ass = hex_to_ass_color(outline_color)
     escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
@@ -634,7 +625,6 @@ def render_advanced_clip(
     )
     filter_chains.append(f"[{current_v}]{sub_style}[vout]")
 
-    # Audio Mixing Configuration
     audio_inputs_count = 2
     if bgm_audio and os.path.exists(bgm_audio):
         inputs_cmd.extend(["-stream_loop", "-1", "-i", bgm_audio])
@@ -658,7 +648,9 @@ def render_advanced_clip(
         audio_filters.append("[orig_a][tts_a]amix=inputs=2:duration=first:dropout_transition=2[aout]")
 
     full_filter_complex = ";".join(filter_chains) + ";" + "".join(audio_filters)
-    tts_dur = get_video_duration(tts_audio) or 10.0
+    tts_dur = get_video_duration(tts_audio)
+    if tts_dur <= 0:
+        tts_dur = 10.0
 
     cmd = inputs_cmd + [
         "-filter_complex", full_filter_complex,
@@ -677,7 +669,7 @@ def render_advanced_clip(
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except subprocess.CalledProcessError as e:
-        print("FFmpeg Full Render Error Log:\n", e.stderr)
+        print("FFmpeg Error:\n", e.stderr)
         fallback_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2"
         fb_cmd = [
             "ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio,
@@ -695,7 +687,7 @@ def render_advanced_clip(
     return output_filename
 
 # =========================================================
-# TAB CONTROLLERS
+# CONTROLLER LOGIC
 # =========================================================
 def tab1_analyze(v_file, v_url, ratio):
     target = v_file if v_file else download_video_from_link(v_url)
@@ -755,10 +747,8 @@ def tab3_auto_pipeline(
         return None, None, "", None, "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ကို စစ်ဆေးပေးပါ။"
 
     try:
-        # ၁။ Script ရေးသားခြင်း
         narration_script, model, dur_msg = run_gemini_video_analysis(target, ratio, voice_lang)
 
-        # ၂။ စာတန်းထိုးအတွက် ဘာသာပြန်ခြင်း
         subtitle_script = narration_script
         need_sub_trans = False
         if "Burmese" in voice_lang and sub_lang != "မြန်မာ (Burmese)":
@@ -773,7 +763,6 @@ def tab3_auto_pipeline(
         if need_sub_trans:
             subtitle_script = translate_to_target_language(narration_script, sub_lang)
 
-        # ၃။ အသံဖိုင်နှင့် စာတန်းထိုး ဖန်တီးခြင်း
         voice_code = VOICES_BY_LANG[voice_lang].get(voice_label, list(VOICES_BY_LANG[voice_lang].values())[0])
         audio_file = asyncio.run(
             generate_tts_file(narration_script, voice_code, speed, "tab3_voice.mp3")
@@ -781,7 +770,6 @@ def tab3_auto_pipeline(
         audio_dur = get_video_duration(audio_file)
         srt_file, _ = generate_srt_and_zip(subtitle_script, total_target_duration=audio_dur, prefix="tab3_sub")
 
-        # ၄။ Video Render ပြုလုပ်ခြင်း
         final_video = render_advanced_clip(
             source_video=target,
             tts_audio=audio_file,
@@ -853,7 +841,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v1_gen_btn = gr.Button("🚀 Recap Script စတင်ထုတ်မည်", variant="primary")
                 with gr.Column(scale=1):
                     v1_css = gr.HTML(get_ratio_css("1:1", "tab1_preview_container"))
-                    v1_preview = gr.Video(label="📺 Video Preview", elem_id="tab1_preview_container")
+                    v1_preview = gr.Video(label="📺 Video Preview (ချက်ချင်းတန်းပေါ်)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
                     go_to_tts_btn = gr.Button("🎙️ Tab 2 (TTS) သို့ သွားရောက် အသံထုတ်မည် ➡️", variant="secondary")
@@ -886,7 +874,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         with gr.TabItem("⚡ 3️⃣ One-Click All-in-One Video Studio", id="tab_auto"):
             gr.Markdown("### 🎛️ Video Crop, Extended Range Mask & Positioning Studio")
             with gr.Row():
-                # LEFT COLUMN: SETTINGS
                 with gr.Column(scale=1):
                     t3_file = gr.Video(label="📹 Video File တင်ရန်")
                     t3_url = gr.Textbox(label="🔗 Video Link (YouTube, TikTok, Facebook, RedNote စသည်)")
@@ -961,7 +948,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
                     t3_run_btn = gr.Button("✨ Video အပြီးစီး One-Click ထုတ်လုပ်မည်", variant="primary", size="lg")
 
-                # RIGHT COLUMN: REAL-TIME PREVIEW & FINAL VIDEO
                 with gr.Column(scale=1):
                     t3_preview_css = gr.HTML(
                         get_tab3_full_preview_html(
@@ -971,7 +957,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                             22, "#00E676", "#000000", 0, -260
                         )
                     )
-                    t3_live_video = gr.Video(label="📺 Real-Time Preview (Preview ဘောင်အတွင်း ကွက်တိပြသမှု)", elem_id="tab3_preview_box")
+                    t3_live_video = gr.Video(label="📺 Real-Time Preview (ဗီဒီယိုတင်လိုက်တာနဲ့ ချက်ချင်းတန်းပေါ်မည်)", elem_id="tab3_preview_box")
                     t3_status = gr.Markdown("စာတန်းထိုး၊ Blur Mask နှင့် Circle Logo များကို Preview Video ဘောင်အတွင်း အပေါ်အောက် အဆုံးထိ စိတ်ကြိုက်ဆွဲရွှေ့နိုင်ပါသည်။")
                     t3_final_video = gr.Video(label="🎬 အပြီးစီး Final Video Output (Playable)")
                     t3_script_view = gr.Textbox(label="📝 ထွက်ရှိလာသော စာတန်းထိုး Script", lines=5)
@@ -979,8 +965,8 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         t3_download = gr.File(label="📥 Final Video ဒေါင်းလုဒ်")
                         t3_srt = gr.File(label="📄 SRT စာတန်းထိုး ဒေါင်းလုဒ်")
 
-    # ================= EVENT BINDINGS =================
-    # Tab 1
+    # ================= EVENT BINDINGS (INSTANT PREVIEW & QUEUE SAFE) =================
+    # Tab 1: Video တင်လိုက်တာနဲ့ Preview မှာ ချက်ချင်းတန်းပေါ်အောင် ချိတ်ဆက်မှု
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
@@ -1002,10 +988,11 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     # Tab 3 - Voice Selection
     t3_voice_lang.change(update_voice_choices, inputs=t3_voice_lang, outputs=t3_voice)
 
-    # Tab 3 - Real-Time Preview Updates
+    # Tab 3: Video File တင်လိုက်တာနဲ့ / Link ယူလိုက်တာနဲ့ Preview တွင် ချက်ချင်းတန်းပေါ်အောင် ချိတ်ဆက်မှု
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_live_video)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_live_video)
 
+    # Tab 3 - Preview Updates (Only Inside Video Container)
     preview_all_inputs = [
         t3_sub_lang, t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
         t3_crop_w, t3_crop_h, t3_blur_bg, t3_bgcolor, t3_bright, t3_contrast,
@@ -1018,7 +1005,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     for comp in preview_all_inputs:
         comp.change(get_tab3_full_preview_html, inputs=preview_all_inputs, outputs=t3_preview_css)
 
-    # Tab 3 - Generate Final One-Clip Video
+    # Tab 3 - Final Execution
     t3_run_btn.click(
         tab3_auto_pipeline,
         inputs=[
@@ -1034,7 +1021,11 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         outputs=[t3_final_video, t3_download, t3_script_view, t3_srt, t3_status]
     )
 
-# Render Server Launch Port
+# Render Server Launch (Queue enabled to completely eliminate HTTP 502 Timeout/Crashes)
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    demo.queue(default_concurrency_limit=5).launch(
+        server_name="0.0.0.0", 
+        server_port=port,
+        show_error=True
+    )
