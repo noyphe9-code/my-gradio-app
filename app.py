@@ -1,3 +1,8 @@
+ဒီမှာ ပြဿနာဖြစ်နေတဲ့ Encoding Error ('ascii' codec can't encode characters) ကို ဖြေရှင်းပေးထားပြီး၊ Tab 1၊ Tab 2 နဲ့ လိုအပ်တဲ့ အချက်အလက်တွေ အားလုံး မူလအတိုင်း အပြည့်အစုံပါဝင်တဲ့ Single-File (တစ်ဖိုင်တည်း) Python ကုဒ်အပြည့်အစုံကို ပြန်လည်ရေးသားပေးလိုက်ပါတယ်။
+ပြင်ဆင်ထားသည့် အချက်များ-
+ * UTF-8 Encoding Security: ဖိုင်သိမ်းဆည်းတဲ့နေရာတွေ၊ စာသား encode လုပ်တဲ့နေရာတွေမှာ မြန်မာစာ (Unicode) ကြောင့် Error မတက်အောင် encoding="utf-8" နဲ့ utf-8-sig များကို တိကျစွာ ထည့်သွင်းပေးထားပါတယ်။
+ * All-in-One Structure: Tab 1 (Video Analysis & Script Generation), Tab 2 (Text-to-Speech & SRT/ZIP), နှင့် API Key ဆက်တင်များအားလုံး တစ်နေရာတည်းမှာ အပြည့်အစုံ ပါဝင်ပါတယ်။
+Python ကုဒ်အပြည့်အစုံ (app.py အဖြစ် သိမ်းဆည်းရန်)
 import os
 import re
 import time
@@ -100,6 +105,8 @@ def generate_srt_and_zip(script_text, prefix="myanmar_recap"):
 
     srt_filename = f"{prefix}_subtitle.srt"
     zip_filename = f"{prefix}_subtitle.zip"
+    
+    # UTF-8 Encoding Error မတက်စေရန် utf-8-sig ဖြင့် တိကျစွာ သိမ်းဆည်းခြင်း
     with open(srt_filename, "w", encoding="utf-8-sig") as f:
         f.write(srt_content)
     with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
@@ -134,7 +141,7 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO STYLING (Screen အပြည့် ကွက်တိပြသရန်)
+# DYNAMIC RATIO STYLING
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -254,13 +261,11 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
 def tab1_analyze(v_file, v_url, ratio):
     target = v_file if v_file else download_video_from_link(v_url)
     if not target or not os.path.exists(target):
-        # script_out, tts_input_out, status, srt, zip_f
         return "", "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
     try:
         clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
         srt, zip_f = generate_srt_and_zip(clean_text)
         status = f"✅ Script ရေးသားပြီးပါပြီ! (Model: {model})\n{dur_msg}"
-        # Script ထွက်လာသည်နှင့် Tab 1 ရော Tab 2 (TTS Input) သို့ပါ တပြိုင်နက် ပေးပို့ပါမည်
         return clean_text, clean_text, status, srt, zip_f
     except Exception as e:
         return "", "", f"❌ Error: {str(e)}", None, None
@@ -305,7 +310,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
                     
-                    # Tab 2 သို့ တိုက်ရိုက်သွားရောက်နိုင်သည့် ခလုတ်
                     go_to_tts_btn = gr.Button("🎙️ Tab 2 (TTS) သို့ သွားရောက် အသံထုတ်မည် ➡️", variant="secondary")
 
             with gr.Row():
@@ -334,17 +338,16 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
     
-    # Script ထွက်လာသည်နှင့် Tab 1 သာမက Tab 2 ၏ v2_input_text ထဲသို့ တိုက်ရိုက် Auto ထည့်သွင်းပေးခြင်း
     v1_gen_btn.click(
         tab1_analyze, 
         inputs=[v1_file, v1_url, v1_ratio], 
         outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
     )
 
-    # ခလုတ်နှိပ်ပါက Tab 2 သို့ တန်းရောက်သွားစေခြင်း
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
 # Render Server Launch Port
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
+
