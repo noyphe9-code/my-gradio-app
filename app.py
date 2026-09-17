@@ -1,8 +1,3 @@
-ဒီမှာ ပြဿနာဖြစ်နေတဲ့ Encoding Error ('ascii' codec can't encode characters) ကို ဖြေရှင်းပေးထားပြီး၊ Tab 1၊ Tab 2 နဲ့ လိုအပ်တဲ့ အချက်အလက်တွေ အားလုံး မူလအတိုင်း အပြည့်အစုံပါဝင်တဲ့ Single-File (တစ်ဖိုင်တည်း) Python ကုဒ်အပြည့်အစုံကို ပြန်လည်ရေးသားပေးလိုက်ပါတယ်။
-ပြင်ဆင်ထားသည့် အချက်များ-
- * UTF-8 Encoding Security: ဖိုင်သိမ်းဆည်းတဲ့နေရာတွေ၊ စာသား encode လုပ်တဲ့နေရာတွေမှာ မြန်မာစာ (Unicode) ကြောင့် Error မတက်အောင် encoding="utf-8" နဲ့ utf-8-sig များကို တိကျစွာ ထည့်သွင်းပေးထားပါတယ်။
- * All-in-One Structure: Tab 1 (Video Analysis & Script Generation), Tab 2 (Text-to-Speech & SRT/ZIP), နှင့် API Key ဆက်တင်များအားလုံး တစ်နေရာတည်းမှာ အပြည့်အစုံ ပါဝင်ပါတယ်။
-Python ကုဒ်အပြည့်အစုံ (app.py အဖြစ် သိမ်းဆည်းရန်)
 import os
 import re
 import time
