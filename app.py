@@ -5,6 +5,7 @@ import zipfile
 import subprocess
 import asyncio
 import uuid
+import shutil
 from pathlib import Path
 import gradio as gr
 import edge_tts
@@ -18,7 +19,6 @@ APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# ပိုမိုမြန်ဆန်စေရန် ပေါ့ပါးသော Flash-Lite နှင့် Flash မော်ဒယ်များကို ဦးစားပေးခြင်း
 GEMINI_MODELS = [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
@@ -31,7 +31,7 @@ VOICES = {
 }
 
 # =========================================================
-# WORKSPACE & SANITIZE HELPERS
+# WORKSPACE & SANITIZE HELPERS (ASCII ERROR FIX)
 # =========================================================
 BASE_DIR = Path("studio_workspace")
 BASE_DIR.mkdir(exist_ok=True)
@@ -40,16 +40,19 @@ def unique_file(prefix, ext):
     return str(BASE_DIR / f"{prefix}_{uuid.uuid4().hex[:10]}{ext}")
 
 def sanitize_video_path(input_path):
-    """ဗီဒီယိုနာမည်တွင် မြန်မာစာ သို့မဟုတ် ASCII မဟုတ်သော စာလုံးများပါပါက Error မတက်စေရန် Safe ဖြစ်သောနာမည်သို့ ကူးယူပြောင်းလဲပေးခြင်း"""
+    """ဗီဒီယိုနာမည် သို့မဟုတ် path တွင် မြန်မာစာ/Unicode ပါပါက ASCII error တက်ခြင်းမှ ကာကွယ်ရန် English စာလုံးသက်သက်ဖြင့် workspace သို့ ကူးယူပေးခြင်း"""
     if not input_path or not os.path.exists(input_path):
         return None
-    ext = os.path.splitext(input_path)[1]
-    if not ext:
-        ext = ".mp4"
-    safe_path = unique_file("input_video", ext)
-    import shutil
-    shutil.copy(input_path, safe_path)
-    return safe_path
+    try:
+        ext = os.path.splitext(input_path)[1]
+        if not ext:
+            ext = ".mp4"
+        safe_path = unique_file("safe_video", ext)
+        shutil.copy2(input_path, safe_path)
+        return safe_path
+    except Exception as e:
+        print("Sanitize Error:", e)
+        return input_path
 
 # =========================================================
 # SYSTEM HELPERS
