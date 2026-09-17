@@ -18,11 +18,11 @@ APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
+# ပိုမိုမြန်ဆန်စေရန် ပေါ့ပါးသော Flash-Lite နှင့် Flash မော်ဒယ်များကို ဦးစားပေးခြင်း
 GEMINI_MODELS = [
+    "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
 ]
 
 VOICES = {
@@ -47,6 +47,7 @@ def sanitize_video_path(input_path):
     if not ext:
         ext = ".mp4"
     safe_path = unique_file("input_video", ext)
+    import shutil
     shutil.copy(input_path, safe_path)
     return safe_path
 
@@ -210,7 +211,7 @@ Target Video Frame Ratio: {selected_ratio}
 """
 
 def generate_with_retry(client, uploaded_file, prompt):
-    retry_delays = [3, 7]
+    retry_delays = [2, 5]
     last_error = None
     for model_name in GEMINI_MODELS:
         for attempt in range(len(retry_delays) + 1):
@@ -249,7 +250,7 @@ def run_gemini_video_analysis(target_media, ratio_choice):
             raise RuntimeError("Gemini Video Processing မအောင်မြင်ပါ။ ဗီဒီယိုဖိုင်ကို စစ်ဆေးပါ။")
         if time.time() - start_wait > 900:
             raise TimeoutError("Gemini Video Processing ကြာမြင့်လွန်းနေပါသည်။")
-        time.sleep(3)
+        time.sleep(2)
         uploaded_file = client.files.get(name=uploaded_file.name)
 
     prompt = build_recap_prompt(ratio_choice)
