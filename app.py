@@ -1,317 +1,117 @@
-import asyncio
-import json
 import os
-import random
 import re
-import shutil
-import subprocess
 import time
-import uuid
 import zipfile
-from pathlib import Path
-
-import edge_tts
+import subprocess
+import asyncio
 import gradio as gr
+import edge_tts
+import yt_dlp
 from google import genai
-from google.genai import types
 
 # =========================================================
-# AI MOVIE RECAP STUDIO PRO
-# OPTIMIZED ALL-IN-ONE VERSION
+# CONFIGURATION & SETTINGS
 # =========================================================
-
 APP_TITLE = "AI Movie Recap Studio Pro"
-MAX_VIDEO_MINUTES = 5
+MAX_VIDEO_MINUTES = 10
+SAVED_API_KEY = ""
 
-PORT = int(os.environ.get("PORT", "7860"))
-
-# Render Environment Variable
-SAVED_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-
-
-# =========================================================
-# CURRENT GEMINI MODELS
-# =========================================================
-
+# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
 ]
-
-
-# =========================================================
-# BURMESE VOICES
-# =========================================================
 
 VOICES = {
     "Thiha (အမျိုးသားအသံ) - Natural": "my-MM-ThihaNeural",
     "Nilar (အမျိုးသမီးအသံ) - Natural": "my-MM-NilarNeural",
 }
 
-
 # =========================================================
-# WORKSPACE
+# SYSTEM HELPERS
 # =========================================================
-
-BASE_DIR = Path("studio_workspace")
-BASE_DIR.mkdir(exist_ok=True)
-
-
-def unique_file(prefix, ext):
-    return str(BASE_DIR / f"{prefix}_{uuid.uuid4().hex[:10]}{ext}")
-
-
-# =========================================================
-# BASIC HELPERS
-# =========================================================
-
-def safe_float(value, default=0.0):
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
-def run_cmd(cmd, timeout=1800):
-    print("\nRUNNING:")
-    print(" ".join(str(x) for x in cmd))
-
-    try:
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("FFmpeg process timeout.")
-
-    if result.returncode != 0:
-        print(result.stderr)
-        raise RuntimeError(result.stderr[-7000:])
-
-    return result
-
-
-def ffmpeg_exists():
-    return shutil.which("ffmpeg") is not None
-
-
-def ffprobe_exists():
-    return shutil.which("ffprobe") is not None
-
-
-# =========================================================
-# API KEY
-# =========================================================
-
 def save_api_key(api_key):
     global SAVED_API_KEY
     if api_key and api_key.strip():
         SAVED_API_KEY = api_key.strip()
-        return "✅ Gemini API Key သိမ်းပြီးပါပြီ။"
-    return "⚠️ Gemini API Key ထည့်ပါ။"
-
-
-# =========================================================
-# VIDEO INFO
-# =========================================================
-
-def get_video_info(video_path):
-    if not video_path or not os.path.exists(video_path) or not ffprobe_exists():
-        return {}
-
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-print_format",
-                "json",
-                "-show_format",
-                "-show_streams",
-                video_path,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            return {}
-        return json.loads(result.stdout)
-    except Exception:
-        return {}
-
+        return "✅ Gemini API Key ကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။"
+    return "⚠️ Gemini API Key ထည့်ပေးပါ။"
 
 def get_video_duration(video_path):
-    info = get_video_info(video_path)
-    try:
-        return float(info["format"]["duration"])
-    except Exception:
+    if not video_path or not os.path.exists(video_path):
         return None
-
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception as e:
+        print("Duration Error:", e)
+    return None
 
 def validate_video_duration(video_path):
     duration = get_video_duration(video_path)
     if duration is None:
-        return True, "ℹ️ Video duration စစ်ဆေး၍မရပါ။"
-
+        return True, "ℹ️ Video duration ကို စစ်ဆေးနေပါသည်..."
     minutes = duration / 60
     if minutes > MAX_VIDEO_MINUTES:
-        return False, (
-            f"⚠️ Video {minutes:.1f} minutes ရှိပါတယ်။\n"
-            f"အများဆုံး {MAX_VIDEO_MINUTES} minutes ပါ။"
-        )
-    return True, f"✅ Video Length: {minutes:.1f} minutes"
-
-
-# =========================================================
-# CLEAN SCRIPT
-# =========================================================
+        return False, f"⚠️ Video သည် {minutes:.1f} မိနစ်ရှိပါသည်။ အများဆုံး {MAX_VIDEO_MINUTES} မိနစ်အထိသာ လက်ခံပါသည်။"
+    return True, f"✅ Video Length: {minutes:.1f} မိနစ်"
 
 def clean_script_for_tts(script_text):
     if not script_text:
         return ""
-
-    lines = []
+    cleaned = []
     for line in script_text.splitlines():
         line = line.strip()
         if not line:
             continue
-
         line = line.replace("**", "").replace("__", "").replace("`", "")
-        line = re.sub(
-            r"^\s*\[(?:Visual|Scene|Video|Audio|Camera|Action|Narration|Narrator|Dialogue)\]\s*[:\-]?\s*",
-            "",
-            line,
-            flags=re.IGNORECASE,
-        )
-        line = re.sub(r"^\s*(Narrator|Narration)\s*:\s*", "", line, flags=re.IGNORECASE)
-
-        if line.startswith("---"):
+        line = re.sub(r"^\s*\[(?:Visual|Scene|Video|Audio|Camera|Action|Narration|Narrator|Dialogue|Intro)\]\s*[:\-]?\s*", "", line, flags=re.IGNORECASE)
+        line = re.sub(r"^\s*Narrator\s*:\s*", "", line, flags=re.IGNORECASE)
+        if line.lower() in ["movie recap", "recap script", "burmese recap script", "script"] or line.startswith("---"):
             continue
-
-        if line.lower() in [
-            "movie recap",
-            "recap script",
-            "burmese recap script",
-            "script",
-            "characters",
-            "important events",
-        ]:
-            continue
-
-        lines.append(line)
-
-    return "\n".join(lines).strip()
-
-
-# =========================================================
-# SRT
-# =========================================================
+        cleaned.append(line.strip())
+    return "\n".join(cleaned)
 
 def seconds_to_srt_time(seconds):
-    seconds = max(0, float(seconds))
-    total_ms = int(seconds * 1000)
-    hours = total_ms // 3600000
-    minutes = (total_ms % 3600000) // 60000
-    secs = (total_ms % 60000) // 1000
-    ms = total_ms % 1000
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+    seconds = max(0, int(seconds))
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},000"
 
-
-def split_script_sentences(text):
-    text = clean_script_for_tts(text)
-    if not text:
-        return []
-
-    parts = re.split(r"(?<=[။!?])\s+|\n+", text)
-    result = []
-    for part in parts:
-        part = part.strip()
-        if part:
-            result.append(part)
-    return result
-
-
-def generate_srt_content(script_text, audio_duration=None):
+def generate_srt_and_zip(script_text, prefix="myanmar_recap"):
     clean_text = clean_script_for_tts(script_text)
     if not clean_text:
-        return ""
-
-    sentences = split_script_sentences(clean_text)
-    if not sentences:
-        return ""
-
-    if not audio_duration:
-        audio_duration = max(5, len(clean_text) / 10)
-
-    weights = [max(1, len(sentence)) for sentence in sentences]
-    total_weight = sum(weights)
-    current = 0.0
-    output = []
-
-    for index, sentence in enumerate(sentences, start=1):
-        duration = audio_duration * weights[index - 1] / total_weight
-        start = current
-        end = current + duration
-
-        output.append(
-            f"{index}\n"
-            f"{seconds_to_srt_time(start)} --> "
-            f"{seconds_to_srt_time(end)}\n"
-            f"{sentence}\n"
-        )
-        current = end
-
-    return "\n".join(output)
-
-
-def generate_srt_and_zip(script_text, audio_duration=None):
-    srt_content = generate_srt_content(script_text, audio_duration)
-    if not srt_content:
         return None, None
+    lines = [x.strip() for x in clean_text.splitlines() if x.strip()]
+    srt_content = ""
+    current_time = 0
+    for idx, line in enumerate(lines, 1):
+        duration = max(2, min(8, round(len(line) / 11)))
+        start_time = current_time
+        end_time = current_time + duration
+        srt_content += f"{idx}\n{seconds_to_srt_time(start_time)} --> {seconds_to_srt_time(end_time)}\n{line}\n\n"
+        current_time = end_time
 
-    srt_filename = unique_file("subtitle", ".srt")
-    zip_filename = unique_file("subtitle", ".zip")
-
-    Path(srt_filename).write_text(srt_content, encoding="utf-8-sig")
-
-    with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as z:
-        z.write(srt_filename, "myanmar_recap_subtitle.srt")
-
+    srt_filename = f"{prefix}_subtitle.srt"
+    zip_filename = f"{prefix}_subtitle.zip"
+    with open(srt_filename, "w", encoding="utf-8-sig") as f:
+        f.write(srt_content)
+    with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
+        zipf.write(srt_filename, arcname=srt_filename)
     return srt_filename, zip_filename
-
-
-# =========================================================
-# VIDEO DOWNLOAD & SANITIZE
-# =========================================================
-
-def sanitize_video_path(input_path):
-    if not input_path or not os.path.exists(input_path):
-        return None
-    
-    ext = os.path.splitext(input_path)[1]
-    if not ext:
-        ext = ".mp4"
-        
-    safe_path = unique_file("input_video", ext)
-    shutil.copy(input_path, safe_path)
-    return safe_path
-
 
 def download_video_from_link(link):
     if not link or not link.strip():
         return None
-
-    output_template = str(BASE_DIR / f"download_{uuid.uuid4().hex[:10]}.%(ext)s")
+    output_template = "temp_downloaded_video.%(ext)s"
     ydl_opts = {
-        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "format": "best[ext=mp4]/best",
         "outtmpl": output_template,
         "quiet": True,
         "no_warnings": True,
@@ -319,228 +119,232 @@ def download_video_from_link(link):
         "overwrites": True,
         "merge_output_format": "mp4",
     }
-
     try:
-        import yt_dlp
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(link.strip(), download=True)
             filename = ydl.prepare_filename(info)
             if os.path.exists(filename):
-                return sanitize_video_path(filename)
-
+                return filename
             base = os.path.splitext(filename)[0]
             for ext in [".mp4", ".mkv", ".webm", ".mov"]:
-                candidate = base + ext
-                if os.path.exists(candidate):
-                    return sanitize_video_path(candidate)
+                if os.path.exists(base + ext):
+                    return base + ext
     except Exception as e:
         print("Download Error:", e)
-
     return None
 
-
-def resolve_video(video_file, video_link):
-    if video_file:
-        if isinstance(video_file, dict):
-            video_file = video_file.get("path") or video_file.get("name")
-        if video_file:
-            return sanitize_video_path(video_file)
-
-    if video_link:
-        return download_video_from_link(video_link)
-
-    return None
-
-
 # =========================================================
-# RATIO
+# DYNAMIC RATIO STYLING (Screen အပြည့် ကွက်တိပြသရန်)
 # =========================================================
-
-RATIO_SIZES = {
-    "9:16": (1080, 1920),
-    "3:4": (1080, 1440),
-    "1:1": (1080, 1080),
-    "16:9": (1920, 1080),
-}
-
-
-def ratio_size(ratio):
-    return RATIO_SIZES.get(ratio, RATIO_SIZES["9:16"])
-
-
-# =========================================================
-# GEMINI PROMPT & GENERATION
-# =========================================================
-
-def build_fast_recap_prompt(ratio):
+def get_ratio_css(ratio, container_id="tab1_preview_container"):
+    configs = {
+        "1:1": {"aspect": "1 / 1", "max_w": "450px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "380px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "640px"},
+        "9:16": {"aspect": "9 / 16", "max_w": "320px"},
+    }
+    cfg = configs.get(ratio, configs["1:1"])
     return f"""
-You are a professional movie recap writer.
-Analyze this video from beginning to end.
-Target output: Burmese social-media movie recap.
-Target ratio: {ratio}
+    <style id="{container_id}-style">
+    #{container_id} {{
+        width: 100% !important;
+        max-width: {cfg["max_w"]} !important;
+        margin: 0 auto !important;
+        transition: all 0.3s ease-in-out !important;
+    }}
+    #{container_id} .video-container {{
+        width: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        height: auto !important;
+        background: #000 !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
+    }}
+    #{container_id} video {{
+        width: 100% !important;
+        height: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        object-fit: cover !important;
+        display: block !important;
+    }}
+    </style>
+    """
 
-IMPORTANT:
-1. Use only events actually visible or audible.
-2. Never invent story details, character names, or relationships.
-3. If dialogue is clear, translate its meaning into Burmese naturally.
-4. Return ONLY the final Burmese recap script without headings or timestamps.
+# =========================================================
+# GEMINI GENERATION
+# =========================================================
+def build_recap_prompt(selected_ratio):
+    return f"""
+သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ 
+Target Video Frame Ratio: {selected_ratio}
+ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ တိကျသေချာစွာ ကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို ရေးသားပေးပါ-
+
+[စည်းမျဉ်းများ]
+၁။ ဗီဒီယိုထဲတွင် တကယ်ဖြစ်ပျက်နေသော အဖြစ်အပျက် အမှန်များကိုသာ အချိန်အစဉ်လိုက် အတိုချုံး၍ တိကျမှန်ကန်စွာ ရေးပါ။
+၂။ ဇာတ်ကောင်များ၏ ပြောစကားများကို သဘာဝကျကျ ဆွဲဆောင်မှုရှိသော မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ပြန်ဆိုပါ။
+၃။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
+၄။ TTS အသံထွက်ဖတ်ရာတွင် ချောမွေ့စေရန် စာကြောင်းတစ်ကြောင်းချင်းစီကို တိုတိုရှင်းရှင်းနှင့် အဓိပ္ပာယ်ပြည့်စုံစွာ ရေးပေးပါ။
 """
 
-
-def retryable_error(error):
-    text = str(error).lower()
-    return any(
-        x in text
-        for x in [
-            "429",
-            "500",
-            "503",
-            "504",
-            "unavailable",
-            "resource_exhausted",
-            "timeout",
-            "deadline",
-            "temporarily",
-        ]
-    )
-
-
-def generate_script_fast(client, uploaded_file, prompt):
+def generate_with_retry(client, uploaded_file, prompt):
+    retry_delays = [3, 7]
     last_error = None
-
-    for model in GEMINI_MODELS:
-        for attempt in range(3):
+    for model_name in GEMINI_MODELS:
+        for attempt in range(len(retry_delays) + 1):
             try:
-                config = types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(thinking_level="low"),
-                    temperature=0.4,
-                )
-
                 response = client.models.generate_content(
-                    model=model, contents=[uploaded_file, prompt], config=config
+                    model=model_name,
+                    contents=[uploaded_file, prompt],
                 )
-
-                if response and response.text and response.text.strip():
-                    return response.text.strip(), model
-
-                raise RuntimeError("Gemini Empty Response")
-
+                if response and response.text:
+                    return response.text, model_name
             except Exception as e:
                 last_error = e
-                print(f"{model} attempt {attempt+1}:", e)
-                if not retryable_error(e):
+                if attempt < len(retry_delays):
+                    time.sleep(retry_delays[attempt])
+                else:
                     break
-                time.sleep(3 + attempt * 4)
+    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
-    raise RuntimeError(f"Gemini failed: {last_error}")
-
-
-# =========================================================
-# MAIN VIDEO ANALYSIS FUNCTION
-# =========================================================
-
-def run_gemini_video_analysis(video_file, video_link, ratio_choice):
+def run_gemini_video_analysis(target_media, ratio_choice):
     global SAVED_API_KEY
-
     if not SAVED_API_KEY:
-        return "", "⚠️ Gemini API Key မရှိပါ။", None, None, None
-
-    source = resolve_video(video_file, video_link)
-    if not source or not os.path.exists(source):
-        return "", "⚠️ Video Upload သို့မဟုတ် URL ထည့်ပါ။", None, None, None
-
-    valid, message = validate_video_duration(source)
+        raise ValueError("Gemini API Key မရှိသေးပါ။ 🔑 API Key Setting ထဲတွင် အရင်ထည့်သွင်းပေးပါ။")
+    valid, msg = validate_video_duration(target_media)
     if not valid:
-        return "", message, None, None, source
+        raise ValueError(msg)
 
+    client = genai.Client(api_key=SAVED_API_KEY)
+    uploaded_file = client.files.upload(file=target_media)
+    
+    start_wait = time.time()
+    while True:
+        if uploaded_file.state and uploaded_file.state.name == "ACTIVE":
+            break
+        if uploaded_file.state and uploaded_file.state.name == "FAILED":
+            raise RuntimeError("Gemini Video Processing မအောင်မြင်ပါ။ ဗီဒီယိုဖိုင်ကို စစ်ဆေးပါ။")
+        if time.time() - start_wait > 900:
+            raise TimeoutError("Gemini Video Processing ကြာမြင့်လွန်းနေပါသည်။")
+        time.sleep(3)
+        uploaded_file = client.files.get(name=uploaded_file.name)
+
+    prompt = build_recap_prompt(ratio_choice)
+    script_text, used_model = generate_with_retry(client, uploaded_file, prompt)
+    clean_text = clean_script_for_tts(script_text)
+    return clean_text, used_model, msg
+
+# =========================================================
+# TTS LOGIC
+# =========================================================
+async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="tab2_output.mp3"):
+    clean_text = clean_script_for_tts(text)
+    if not clean_text:
+        return None, None, None
+    selected_voice = VOICES.get(voice_choice, "my-MM-ThihaNeural")
+    rate_str = f"{int(speed_percent):+d}%"
+    communicate = edge_tts.Communicate(clean_text, selected_voice, rate=rate_str)
+    await communicate.save(output_name)
+    srt_file, zip_file = generate_srt_and_zip(clean_text, prefix=output_name.replace(".mp3", ""))
+    return output_name, srt_file, zip_file
+
+# =========================================================
+# TAB CONTROLLERS
+# =========================================================
+def tab1_analyze(v_file, v_url, ratio):
+    target = v_file if v_file else download_video_from_link(v_url)
+    if not target or not os.path.exists(target):
+        # script_out, tts_input_out, status, srt, zip_f
+        return "", "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
     try:
-        client = genai.Client(api_key=SAVED_API_KEY)
-        print("Uploading video to Gemini...")
-        uploaded = client.files.upload(file=source)
-
-        start = time.time()
-        while True:
-            state = uploaded.state.name if uploaded.state else ""
-            print("Gemini:", state)
-
-            if state == "ACTIVE":
-                break
-            if state == "FAILED":
-                raise RuntimeError("Gemini Video Processing Failed.")
-            if time.time() - start > 600:
-                raise RuntimeError("Gemini Video Processing Timeout.")
-
-            time.sleep(3)
-            uploaded = client.files.get(name=uploaded.name)
-
-        prompt = build_fast_recap_prompt(ratio_choice)
-        print("Generating recap...")
-
-        script, used_model = generate_script_fast(client, uploaded, prompt)
-        script = clean_script_for_tts(script)
-
-        if not script:
-            raise RuntimeError("Gemini Script Empty.")
-
-        duration = get_video_duration(source)
-        srt_file, zip_file = generate_srt_and_zip(script, duration)
-
-        return (
-            script,
-            "✅ ဇာတ်ညွှန်း အောင်မြင်စွာ ထွက်ရှိပါပြီ။",
-            srt_file,
-            zip_file,
-            source,
-        )
-
+        clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
+        srt, zip_f = generate_srt_and_zip(clean_text)
+        status = f"✅ Script ရေးသားပြီးပါပြီ! (Model: {model})\n{dur_msg}"
+        # Script ထွက်လာသည်နှင့် Tab 1 ရော Tab 2 (TTS Input) သို့ပါ တပြိုင်နက် ပေးပို့ပါမည်
+        return clean_text, clean_text, status, srt, zip_f
     except Exception as e:
-        print("Error:", e)
-        return "", f"⚠️ Error: {str(e)}", None, None, source
+        return "", "", f"❌ Error: {str(e)}", None, None
 
+def tab2_tts(text, voice, speed):
+    try:
+        mp3, srt, zip_f = asyncio.run(generate_myanmar_tts(text, voice, speed, "tab2_output.mp3"))
+        return mp3, mp3, srt, zip_f
+    except Exception as e:
+        print("Tab 2 Error:", e)
+        return None, None, None, None
 
 # =========================================================
-# LAUNCH GRADIO APP
+# GRADIO UI
 # =========================================================
+with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Myanmar Voice-Over**")
 
-if __name__ == "__main__":
-    with gr.Blocks(title=APP_TITLE) as demo:
-        gr.Markdown(f"# 🎬 {APP_TITLE}")
-        
-        with gr.Row():
-            api_key_input = gr.Textbox(
-                label="Gemini API Key", 
-                type="password", 
-                value=SAVED_API_KEY
-            )
-            api_key_btn = gr.Button("Save API Key")
-            api_key_status = gr.Markdown()
-            api_key_btn.click(save_api_key, inputs=[api_key_input], outputs=[api_key_status])
+    with gr.Tabs() as main_tabs:
+        # --- API KEY TAB ---
+        with gr.TabItem("🔑 API Key Setting", id="tab_key"):
+            gr.Markdown("### 🔐 Gemini API Key ထည့်သွင်းပါ")
+            api_key_input = gr.Textbox(label="Gemini API Key", type="password", placeholder="AIzaSy...")
+            save_key_btn = gr.Button("💾 API Key သိမ်းမည်", variant="primary")
+            key_status = gr.Markdown("")
+            save_key_btn.click(save_api_key, inputs=api_key_input, outputs=key_status)
 
-        with gr.Row():
-            with gr.Column():
-                video_file = gr.File(label="Upload Video (Max 5 mins)")
-                video_link = gr.Textbox(label="Or Video URL (YouTube, etc.)")
-                ratio_choice = gr.Radio(
-                    ["9:16", "3:4", "1:1", "16:9"], 
-                    value="9:16", 
-                    label="Target Ratio"
-                )
-                run_btn = gr.Button("🚀 Generate Recap Script", variant="primary")
+        # --- TAB 1: SCRIPT ---
+        with gr.TabItem("1️⃣ Video Analysis & Script", id="tab_script"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    v1_file = gr.Video(label="📹 Video File တင်ရန်")
+                    v1_url = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok, Facebook စသည်)")
+                    v1_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
+                    
+                    v1_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="1:1", label="📐 Preview Screen Aspect Ratio")
+                    v1_gen_btn = gr.Button("🚀 Recap Script စတင်ထုတ်မည်", variant="primary")
+                
+                with gr.Column(scale=1):
+                    v1_css = gr.HTML(get_ratio_css("1:1", "tab1_preview_container"))
+                    v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container")
+                    v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
+                    v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
+                    
+                    # Tab 2 သို့ တိုက်ရိုက်သွားရောက်နိုင်သည့် ခလုတ်
+                    go_to_tts_btn = gr.Button("🎙️ Tab 2 (TTS) သို့ သွားရောက် အသံထုတ်မည် ➡️", variant="secondary")
 
-            with gr.Column():
-                script_output = gr.Textbox(label="Burmese Recap Script", lines=15)
-                status_output = gr.Markdown()
-                srt_download = gr.File(label="Download SRT Subtitle")
-                zip_download = gr.File(label="Download ZIP Package")
+            with gr.Row():
+                v1_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
+                v1_zip = gr.File(label="📦 SRT ZIP ဒေါင်းလုဒ်")
 
-        run_btn.click(
-            run_gemini_video_analysis,
-            inputs=[video_file, video_link, ratio_choice],
-            outputs=[script_output, status_output, srt_download, zip_download, video_file]
-        )
+        # --- TAB 2: TTS ---
+        with gr.TabItem("2️⃣ Text-to-Speech", id="tab_tts"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    v2_input_text = gr.Textbox(label="🎙️ Burmese Script (Tab 1 မှ အလိုအလျောက် ရောက်ရှိပါမည်)", lines=12)
+                    v2_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 အသံ ရွေးချယ်ပါ")
+                    v2_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Speed (%)")
+                    v2_btn = gr.Button("⚡ မြန်မာအသံဖိုင် ဖန်တီးမည်", variant="primary")
+                with gr.Column(scale=1):
+                    v2_audio = gr.Audio(label="🔊 Voice Preview (အသံစမ်းနားထောင်ရန်)", autoplay=True)
+                    v2_mp3 = gr.File(label="🎵 MP3 ဖိုင် ဒေါင်းလုဒ်")
+            with gr.Row():
+                v2_srt = gr.File(label="📄 SRT")
+                v2_zip = gr.File(label="📦 SRT ZIP")
 
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=PORT,
-        share=False
+            v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
+
+    # ================= EVENT BINDINGS =================
+    v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
+    v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
+    v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
+    
+    # Script ထွက်လာသည်နှင့် Tab 1 သာမက Tab 2 ၏ v2_input_text ထဲသို့ တိုက်ရိုက် Auto ထည့်သွင်းပေးခြင်း
+    v1_gen_btn.click(
+        tab1_analyze, 
+        inputs=[v1_file, v1_url, v1_ratio], 
+        outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
     )
+
+    # ခလုတ်နှိပ်ပါက Tab 2 သို့ တန်းရောက်သွားစေခြင်း
+    go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
+
+# Render Server Launch Port
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 7860))
+    demo.launch(server_name="0.0.0.0", server_port=port)
