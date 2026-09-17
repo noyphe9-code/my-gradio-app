@@ -18,9 +18,8 @@ MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
 GEMINI_MODELS = [
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
 ]
 
 VOICES_BY_LANG = {
@@ -69,7 +68,6 @@ def get_video_duration(video_path):
     return None
 
 def has_audio_stream(video_path):
-    """ဗီဒီယိုထဲတွင် အသံပါမပါ စစ်ဆေးခြင်း (Silent Video Error ကာကွယ်ရန်)"""
     if not video_path or not os.path.exists(video_path):
         return False
     try:
@@ -284,15 +282,15 @@ def hex_to_rgba(hex_code, opacity):
     return f"rgba(0, 0, 0, {opacity})"
 
 def get_tab3_full_preview_html(
-    sub_lang,
-    ratio, flip_h, scale_val, x_off, y_off,
-    crop_w_pct, crop_h_pct,
-    crop_fill_mode, crop_fill_color,
-    use_blur_bg, bg_color,
-    bright_val, contrast_val,
-    mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
-    logo_file, logo_size, logo_x, logo_y,
-    font_family, font_size, font_color, outline_color, sub_x, sub_y
+    sub_lang="မြန်မာ (Burmese)",
+    ratio="9:16", flip_h=False, scale_val=1.0, x_off=0, y_off=0,
+    crop_w_pct=100, crop_h_pct=100,
+    crop_fill_mode="Blur (ဝေဝါးဖြည့်)", crop_fill_color="#202020",
+    use_blur_bg=True, bg_color="#000000",
+    bright_val=1.0, contrast_val=1.0,
+    mask_enable=True, mask_type="Blur (ဝေဝါးဖုံး)", mask_color="#000000", mask_opacity=0.85, mask_w=85, mask_h=85, mask_x=0, mask_y=-260,
+    logo_file=None, logo_size=100, logo_x=0, logo_y=300,
+    font_family="Pyidaungsu", font_size=22, font_color="#00E676", outline_color="#000000", sub_x=0, sub_y=-260
 ):
     configs = {
         "1:1": {"aspect": "1 / 1", "max_w": "400px"},
@@ -303,7 +301,6 @@ def get_tab3_full_preview_html(
     cfg = configs.get(ratio, configs["9:16"])
     flip_x = "-1" if flip_h else "1"
 
-    # Mask Overlay (Relative to Video Container)
     mask_html = ""
     if mask_enable:
         mask_bg = hex_to_rgba(mask_color, mask_opacity)
@@ -325,7 +322,6 @@ def get_tab3_full_preview_html(
         "></div>
         """
 
-    # Logo Overlay
     logo_html = ""
     if logo_file:
         try:
@@ -348,7 +344,6 @@ def get_tab3_full_preview_html(
         except Exception:
             pass
 
-    # Sample Lines by Language
     if sub_lang == "English":
         sample_l1 = "A man standing on the mountain"
         sample_l2 = "( Sample English Subtitle )"
@@ -404,33 +399,12 @@ def get_tab3_full_preview_html(
     </div>
     """
 
-    # Crop is always symmetric: the same amount is removed from both
-    # left/right and both top/bottom. The removed area is filled instead of
-    # exposing the browser's default white background.
     inset_x = max(0.0, min(49.0, (100 - float(crop_w_pct)) / 2))
     inset_y = max(0.0, min(49.0, (100 - float(crop_h_pct)) / 2))
     clip_style = f"clip-path: inset({inset_y:.1f}% {inset_x:.1f}% {inset_y:.1f}% {inset_x:.1f}%);"
-    fill_css = (
-        "backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); "
-        "background: rgba(0,0,0,0.12);"
-        if crop_fill_mode == "Blur (ဝေဝါးဖြည့်)"
-        else f"background: {crop_fill_color};"
-    )
-    crop_fill_html = f"""
-    <div id="tab3_crop_fill" style="
-        position:absolute; inset:0; z-index:1; pointer-events:none;
-        overflow:hidden; border-radius:14px;
-    ">
-        <div style="position:absolute; left:0; right:0; top:0; height:{inset_y:.1f}%; {fill_css}"></div>
-        <div style="position:absolute; left:0; right:0; bottom:0; height:{inset_y:.1f}%; {fill_css}"></div>
-        <div style="position:absolute; left:0; top:{inset_y:.1f}%; bottom:{inset_y:.1f}%; width:{inset_x:.1f}%; {fill_css}"></div>
-        <div style="position:absolute; right:0; top:{inset_y:.1f}%; bottom:{inset_y:.1f}%; width:{inset_x:.1f}%; {fill_css}"></div>
-    </div>
-    """
 
     return f"""
     <style id="tab3-live-preview-style">
-    /* Keep the real Gradio video and the live overlay in one stable stage. */
     #tab3_stage {{
         position: relative !important;
         width: 100% !important;
@@ -634,7 +608,6 @@ def render_advanced_clip(
 
     current_v = "v_base"
 
-    # Mask to cover original subtitles
     if mask_enable:
         mw = int(tw * (mask_w / 100.0))
         mh = int(mask_h * (th / 1920.0 * 2.0))
@@ -655,7 +628,6 @@ def render_advanced_clip(
             )
         current_v = "v_masked"
 
-    # Logo Overlay
     inputs_cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio]
     next_input_idx = 2
 
@@ -671,7 +643,6 @@ def render_advanced_clip(
         )
         current_v = "v_logoed"
 
-    # Subtitles
     primary_ass = hex_to_ass_color(font_color)
     outline_ass = hex_to_ass_color(outline_color)
     escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
@@ -684,7 +655,6 @@ def render_advanced_clip(
     )
     filter_chains.append(f"[{current_v}]{sub_style}[vout]")
 
-    # Audio Mixing Configuration (Silent Video Protection)
     audio_inputs_count = 2
     if bgm_audio and os.path.exists(bgm_audio):
         inputs_cmd.extend(["-stream_loop", "-1", "-i", bgm_audio])
@@ -724,7 +694,6 @@ def render_advanced_clip(
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     except subprocess.CalledProcessError as e:
         print("FFmpeg Full Render Error Log:\n", e.stderr)
-        # Safe Fallback to ensure completion
         fallback_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2"
         fb_cmd = [
             "ffmpeg", "-y", "-stream_loop", "-1", "-i", source_video, "-i", tts_audio,
@@ -805,10 +774,8 @@ def tab3_auto_pipeline(
         return None, None, "", None, "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ကို စစ်ဆေးပေးပါ။"
 
     try:
-        # ၁။ Script ရေးသားခြင်း
         narration_script, model, dur_msg = run_gemini_video_analysis(target, ratio, voice_lang)
         
-        # ၂။ စာတန်းထိုးအတွက် ဘာသာပြန်ခြင်း
         subtitle_script = narration_script
         need_sub_trans = False
         if "Burmese" in voice_lang and sub_lang != "မြန်မာ (Burmese)":
@@ -823,7 +790,6 @@ def tab3_auto_pipeline(
         if need_sub_trans:
             subtitle_script = translate_to_target_language(narration_script, sub_lang)
 
-        # ၃။ အသံဖိုင်နှင့် စာတန်းထိုး ဖန်တီးခြင်း
         voice_code = VOICES_BY_LANG[voice_lang].get(voice_label, list(VOICES_BY_LANG[voice_lang].values())[0])
         audio_file = asyncio.run(
             generate_tts_file(narration_script, voice_code, speed, "tab3_voice.mp3")
@@ -832,7 +798,6 @@ def tab3_auto_pipeline(
         audio_dur = get_video_duration(audio_file)
         srt_file, _ = generate_srt_and_zip(subtitle_script, total_target_duration=audio_dur, prefix="tab3_sub")
 
-        # ၄။ Video Render ပြုလုပ်ခြင်း
         final_video = render_advanced_clip(
             source_video=target,
             tts_audio=audio_file,
@@ -880,7 +845,7 @@ def tab3_auto_pipeline(
 # =========================================================
 # GRADIO UI
 # =========================================================
-with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title=APP_TITLE) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}\n**All-in-One Professional Multilingual Movie Recap Studio**")
 
     with gr.Tabs() as main_tabs:
@@ -1026,24 +991,14 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
                 # RIGHT COLUMN: REAL-TIME PREVIEW & FINAL VIDEO
                 with gr.Column(scale=1):
-                    # The video is deliberately kept as a separate stable component.
-                    # Only the overlay HTML is replaced when settings change.
                     with gr.Column(elem_id="tab3_stage"):
                         t3_live_video = gr.Video(
                             label="📺 Real-Time Preview (Preview ဘောင်အတွင်း ကွက်တိပြသမှု)",
                             elem_id="tab3_preview_box"
                         )
+                        # Fixed call with default parameters
                         t3_preview_css = gr.HTML(
-                            get_tab3_full_preview_html(
-                                "မြန်မာ (Burmese)",
-                                "9:16", False, 1.0, 0, 0,
-                                100, 100,
-                                True, "#000000",
-                                1.0, 1.0,
-                                True, "Blur (ဝေဝါးဖုံး)", "#000000", 0.85, 85, 85, 0, -260,
-                                None, 100, 0, 300,
-                                "Pyidaungsu", 22, "#00E676", "#000000", 0, -260
-                            ),
+                            get_tab3_full_preview_html(),
                             elem_id="tab3_overlay_host"
                         )
                     t3_status = gr.Markdown("စာတန်းထိုးနှင့် Mask များကို Preview Video ဘောင်အတွင်း အပေါ်အောက် အဆုံးထိ စိတ်ကြိုက်ဆွဲရွှေ့နိုင်ပါသည်။")
@@ -1117,4 +1072,4 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 # Render Server Launch Port
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
