@@ -1,4 +1,6 @@
 import os
+import sys
+import locale
 import re
 import time
 import zipfile
@@ -6,6 +8,16 @@ import subprocess
 import asyncio
 import base64
 import gradio as gr
+
+# Burmese/Thai/Chinese output must never fall back to ASCII.
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("LANG", "C.UTF-8")
+os.environ.setdefault("LC_ALL", "C.UTF-8")
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import edge_tts
 import yt_dlp
 from google import genai
@@ -47,6 +59,22 @@ SUBTITLE_LANG_CHOICES = ["မြန်မာ (Burmese)", "English", "ไทย (
 # =========================================================
 # SYSTEM HELPERS
 # =========================================================
+def as_filepath(value):
+    """Normalize Gradio filepath/dict inputs without encoding surprises."""
+    if not value:
+        return None
+    if isinstance(value, dict):
+        value = value.get("path") or value.get("name")
+    path = os.fspath(value) if isinstance(value, (str, bytes, os.PathLike)) else None
+    return path if path and os.path.exists(path) else None
+
+def safe_error(exc):
+    """Return a Unicode-safe, user-readable error message."""
+    try:
+        return str(exc).encode("utf-8", "replace").decode("utf-8", "replace")
+    except Exception:
+        return repr(exc)
+
 def save_api_key(api_key):
     global SAVED_API_KEY
     if api_key and api_key.strip():
@@ -60,7 +88,7 @@ def get_video_duration(video_path):
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip())
@@ -78,7 +106,7 @@ def detect_scene_boundaries(video_path, threshold=0.35):
         "-an", "-f", "null", "-"
     ]
     try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=300)
         return sorted({float(x) for x in re.findall(r"pts_time:([0-9]+(?:\.[0-9]+)?)", result.stderr)})
     except Exception as e:
         print("Scene detection skipped:", e)
@@ -95,7 +123,7 @@ def detect_freeze_intervals(video_path, min_duration=1.5):
         "-an", "-f", "null", "-"
     ]
     try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=300)
         log = result.stderr
         starts = [float(x) for x in re.findall(r"freeze_start:([0-9]+(?:\.[0-9]+)?)", log)]
         ends = [float(x) for x in re.findall(r"freeze_end:([0-9]+(?:\.[0-9]+)?)", log)]
@@ -168,7 +196,7 @@ def prepare_scene_aware_video(source_video, output_filename="scene_aware_source.
         cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k"]
     cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-movflags", "+faststart", output_filename]
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=900)
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=900)
         return output_filename if os.path.exists(output_filename) else source_video
     except Exception as e:
         print("Scene-aware render skipped:", e)
@@ -181,7 +209,7 @@ def has_audio_stream(video_path):
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=15
         )
         return "audio" in result.stdout.lower()
     except Exception:
@@ -271,7 +299,7 @@ def generate_srt_and_zip(script_text, total_target_duration=None, prefix="recap_
 
     srt_filename = f"{prefix}_subtitle.srt"
     zip_filename = f"{prefix}_subtitle.zip"
-    with open(srt_filename, "w", encoding="utf-8-sig") as f:
+    with open(srt_filename, "w", encoding="utf-8-sig", newline="\n") as f:
         f.write(srt_content)
     with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
         zipf.write(srt_filename, arcname=srt_filename)
@@ -288,6 +316,9 @@ def download_video_from_link(link):
         "no_warnings": True,
         "noplaylist": True,
         "overwrites": True,
+        "windowsfilenames": True,
+        "consoletitle": False,
+        "logger": None,
         "merge_output_format": "mp4",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     }
@@ -438,6 +469,7 @@ def get_tab3_in_video_preview_html(
 
     # Logo Overlay
     logo_html = ""
+    logo_file = as_filepath(logo_file)
     if logo_file:
         try:
             with open(logo_file, "rb") as lf:
@@ -862,7 +894,7 @@ def render_advanced_clip(
     ]
 
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     except subprocess.CalledProcessError as e:
         print("FFmpeg Render Fallback:", e.stderr)
         fallback_vf = f"scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2"
@@ -882,7 +914,7 @@ def render_advanced_clip(
 # TAB CONTROLLERS
 # =========================================================
 def tab1_analyze(v_file, v_url, ratio):
-    target = v_file if v_file else download_video_from_link(v_url)
+    target = as_filepath(v_file) or download_video_from_link(v_url)
     if not target or not os.path.exists(target):
         return "", "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
     try:
@@ -891,7 +923,7 @@ def tab1_analyze(v_file, v_url, ratio):
         status = f"✅ Script ရေးသားပြီးပါပြီ! (Model: {model})\n{dur_msg}"
         return clean_text, clean_text, status, srt, zip_f
     except Exception as e:
-        return "", "", f"❌ Error: {str(e)}", None, None
+        return "", "", f"❌ Error: {safe_error(e)}", None, None
 
 def handle_direct_translate(text):
     if not text or not text.strip():
@@ -900,7 +932,7 @@ def handle_direct_translate(text):
         translated = translate_to_target_language(text, "Burmese (မြန်မာ)")
         return translated, "✅ မြန်မာဘာသာသို့ အောင်မြင်စွာ ပြန်ဆိုပြီးပါပြီ။"
     except Exception as e:
-        return text, f"❌ Translation Error: {str(e)}"
+        return text, f"❌ Translation Error: {safe_error(e)}"
 
 def tab2_tts_with_auto_translate(text, voice_label, speed):
     current_text = text
@@ -920,7 +952,7 @@ def tab2_tts_with_auto_translate(text, voice_label, speed):
         status_msg = f"✅ အသံဖိုင် ဖန်တီးပြီးပါပြီ!{trans_note}"
         return current_text, audio_name, audio_name, srt_f, zip_f, status_msg
     except Exception as e:
-        return current_text, None, None, None, None, f"❌ Error: {str(e)}"
+        return current_text, None, None, None, None, f"❌ Error: {safe_error(e)}"
 
 def update_voice_choices(voice_lang):
     voices = list(VOICES_BY_LANG[voice_lang].keys())
@@ -939,7 +971,7 @@ def tab3_auto_pipeline(
     logo_file, logo_size, logo_x, logo_y,
     font_family, font_size, font_color, outline_color, sub_x, sub_y
 ):
-    target = v_file if v_file else download_video_from_link(v_url)
+    target = as_filepath(v_file) or download_video_from_link(v_url)
     if not target or not os.path.exists(target):
         return None, None, "", None, "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ကို စစ်ဆေးပေးပါ။"
 
@@ -1022,7 +1054,7 @@ def tab3_auto_pipeline(
         status_msg = f"🎉 Video အပြီးစီး အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!\n🎤 အသံ: {voice_lang}\n📝 စာတန်းထိုး: {sub_lang}\n🎬 Model: {model}\n{dur_msg}"
         return final_video, final_video, subtitle_script, srt_file, status_msg
     except Exception as e:
-        return None, None, "", None, f"❌ Error ဖြစ်ပေါ်ပါသည်: {str(e)}"
+        return None, None, "", None, f"❌ Error ဖြစ်ပေါ်ပါသည်: {safe_error(e)}"
 
 # =========================================================
 # GRADIO UI
@@ -1201,7 +1233,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
 
     # ================= EVENT BINDINGS =================
     # Tab 1
-    v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
+    v1_file.change(lambda f: as_filepath(f), inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
     v1_gen_btn.click(
@@ -1223,7 +1255,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
     t3_voice_lang.change(update_voice_choices, inputs=t3_voice_lang, outputs=t3_voice)
 
     # Tab 3 - Real-Time Preview Updates (Preserves Video, Never hides it)
-    t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_live_video)
+    t3_file.change(lambda f: as_filepath(f), inputs=t3_file, outputs=t3_live_video)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_live_video)
 
     preview_all_inputs = [
