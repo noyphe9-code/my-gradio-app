@@ -667,35 +667,38 @@ def build_recap_prompt(selected_ratio, voice_language, video_duration=None):
     if video_duration:
         dur_guidance = f"\nVideo Length: {video_duration:.1f} seconds. Keep the recap length strictly balanced."
 
-    lang_instructions = {
-        "မြန်မာ (Burmese Voice)": "မြန်မာ Movie Recap Script အဖြစ် မြန်မာစာလုံးပေါင်း သတ်ပုံတိကျစွာ၊ နားထောင်ရသဘာဝကျကျ ရေးသားပေးပါ။",
-        "English Voice": "Write an engaging, fluent English Movie Recap Script suitable for viral video narration.",
-        "ไทย (Thai Voice)": "เขียนบทพากย์สรุปหนังภาษาไทย (Thai Movie Recap Script) ที่น่าสนใจ ถูกต้องตามไวยากรณ์ และกระชับชัดเจน",
-        "中文 (Chinese Voice)": "写出地道、流畅的中文电影解说旁白文案，语句紧凑生动。"
-    }
-
-    instruction = lang_instructions.get(voice_language, lang_instructions["မြန်မာ (Burmese Voice)"])
+    # Keep the request itself ASCII-only. Some google-genai/httpx versions
+    # incorrectly try to ASCII-encode parts of the request; the model can
+    # still generate the requested Unicode language in its response.
+    if "English" in voice_language:
+        target_language = "English"
+    elif "Thai" in voice_language:
+        target_language = "Thai"
+    elif "Chinese" in voice_language:
+        target_language = "Chinese"
+    else:
+        target_language = "Burmese"
 
     return f"""
 You are an expert movie recap writer and scene-by-scene visual storyteller.
 Target Aspect Ratio = {selected_ratio}{dur_guidance}
-Target Narration Voice Language = {voice_language}
+Write the final script in {target_language}.
 
 Write a complete beginning-to-end recap based ONLY on what is visible or audible in the video.
 Do not skip the opening, transitions, important reactions, turning points, climax, or ending.
 The result must feel exciting and natural for TikTok, Facebook Reels, and YouTube viewers.
 
 Required writing style:
-1. {instruction}
+1. Use natural, grammatically correct {target_language} suitable for spoken narration and TTS.
 2. Follow the video's exact chronological order. Describe visual actions, locations, facial expressions,
    emotions, suspense, and cause-and-effect in a vivid but concise way so the listener can imagine every shot.
 3. Include both narrator voice-over and character-to-character conversations whenever dialogue is audible.
    Preserve the meaning of audible dialogue accurately; do not invent conversations that cannot be heard or inferred.
 4. Use this exact readable format, one speaker per paragraph:
-   Narrator: [natural Burmese narration]
+   Narrator: [natural narration in the target language]
    Character 1: [what the character says]
    Character 2: [reply]
-   Use a short descriptive speaker name when clearly identifiable (for example, မင်းသား၊ မင်းသမီး၊ အမျိုးသား၊ အမျိုးသမီး).
+   Use a short descriptive speaker name when clearly identifiable. If a name is not clear, use Character 1 or Character 2.
 5. Narrator lines should connect scenes smoothly and create curiosity. Character lines should sound like natural spoken Burmese,
    not a literal translation. Keep the pacing engaging, with a strong hook in the opening and a satisfying ending.
 6. Do not output markdown, bullet points, scene numbers, timestamps, camera/visual/audio tags, or production instructions.
