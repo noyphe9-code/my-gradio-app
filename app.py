@@ -496,3 +496,51 @@ def run_gemini_video_analysis(video_file, video_link, ratio_choice):
     except Exception as e:
         print("Error:", e)
         return "", f"⚠️ Error: {str(e)}", None, None, source
+
+
+# =========================================================
+# LAUNCH GRADIO APP
+# =========================================================
+
+if __name__ == "__main__":
+    with gr.Blocks(title=APP_TITLE) as demo:
+        gr.Markdown(f"# 🎬 {APP_TITLE}")
+        
+        with gr.Row():
+            api_key_input = gr.Textbox(
+                label="Gemini API Key", 
+                type="password", 
+                value=SAVED_API_KEY
+            )
+            api_key_btn = gr.Button("Save API Key")
+            api_key_status = gr.Markdown()
+            api_key_btn.click(save_api_key, inputs=[api_key_input], outputs=[api_key_status])
+
+        with gr.Row():
+            with gr.Column():
+                video_file = gr.File(label="Upload Video (Max 5 mins)")
+                video_link = gr.Textbox(label="Or Video URL (YouTube, etc.)")
+                ratio_choice = gr.Radio(
+                    ["9:16", "3:4", "1:1", "16:9"], 
+                    value="9:16", 
+                    label="Target Ratio"
+                )
+                run_btn = gr.Button("🚀 Generate Recap Script", variant="primary")
+
+            with gr.Column():
+                script_output = gr.Textbox(label="Burmese Recap Script", lines=15)
+                status_output = gr.Markdown()
+                srt_download = gr.File(label="Download SRT Subtitle")
+                zip_download = gr.File(label="Download ZIP Package")
+
+        run_btn.click(
+            run_gemini_video_analysis,
+            inputs=[video_file, video_link, ratio_choice],
+            outputs=[script_output, status_output, srt_download, zip_download, video_file]
+        )
+
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=PORT,
+        share=False
+    )
