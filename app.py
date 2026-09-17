@@ -10,7 +10,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-import edge_ts
+import edge_tts
 import gradio as gr
 from google import genai
 from google.genai import types
@@ -293,7 +293,6 @@ def generate_srt_and_zip(script_text, audio_duration=None):
 # =========================================================
 
 def sanitize_video_path(input_path):
-    """Burmese သို့မဟုတ် ASCII မဟုတ်သော နာမည်များကြောင့် Error မတက်စေရန် Safe ဖြစ်သောနာမည်သို့ ပြောင်းပေးခြင်း"""
     if not input_path or not os.path.exists(input_path):
         return None
     
