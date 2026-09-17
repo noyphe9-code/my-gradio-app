@@ -1,10 +1,3 @@
-ပေးပို့ထားတဲ့ Code ထဲမှာ အောက်ပါ အမှား (၃) ချက် ကျန်ရှိနေတာကို တွေ့ရပါသည်-
- * SyntaxError အမှား: Code ရဲ့ အောက်ဆုံးမှာ မြန်မာစာသား Tab.3 မှာ video crop လုပ်တဲ့နေမှာ ... ဆိုတာ ပါနေလို့ Python က Run ရင် syntax error ချက်ချင်းတက်ပါမည်။
- * Crop လုပ်သည့်နေရာတွင် အဖြူရောင်မဖြစ်စေဘဲ ဘယ်/ညာ၊ အပေါ်/အောက် ညီတူညီမျှ ဖြတ်တောက်ပြီး Blur/Color ဖြည့်ပေးခြင်း:
-   * ဘယ်နှင့် ညာ (X-axis) ညီတူ၊ အပေါ်နှင့် အောက် (Y-axis) ညီတူ ဖြတ်ထုတ်ရန် Slider တပ်ဆင်ထားပါသည်။
-   * ဖြတ်ထုတ်လိုက်သော ဘေးဘောင်နေရာများတွင် အဖြူရောင် လုံးဝ မပေါ်စေဘဲ မိမိရွေးချယ်ထားသော Blur (ဝေဝါးသော နောက်ခံ) သို့မဟုတ် Color Picker မှ အရောင်စုံ အလိုအလျောက် ဖြည့်စွက်ပေးမည့် Dual-Layer Canvas ကို Preview ရော FFmpeg Render မှာပါ တပြေးညီ ချိတ်ဆက်ပေးထားပါသည်။
- * Parameter mismatch အမှား: tab3_auto_pipeline ထဲတွင် crop_fill_mode, crop_fill_color တို့ကို FFmpeg ရဲ့ render_advanced_clip ထဲသို့ မပို့မိဘဲ ကျန်ခဲ့သည့်အတွက် Final Render ထုတ်သည့်အခါ Argument Error တက်နိုင်သည့် အမှားကို ပြင်ဆင်ပေးထားပါသည်။
-စစ်ဆေးပြင်ဆင်ပြီးစီးထားသော app.py Code အပြည့်အစုံ ဖြစ်ပါသည်-
 import os
 import re
 import time
@@ -301,12 +294,10 @@ def get_tab3_js_mount_html(
     max_w_val = cfg["max_w"]
     flip_x = "-1" if flip_h else "1"
 
-    # Relative coordinates inside the real video box
     mask_top_pct = 50.0 - (mask_y / 5.0)
     sub_top_pct = 50.0 - (sub_y / 5.0)
     logo_top_pct = 50.0 - (logo_y / 5.0)
 
-    # 1. Mask Box Overlay
     mask_html = ""
     if mask_enable:
         mask_bg = hex_to_rgba(mask_color, mask_opacity)
@@ -315,7 +306,6 @@ def get_tab3_js_mount_html(
         <div style="position: absolute; left: calc(50% + {mask_x}px); top: {mask_top_pct}%; transform: translate(-50%, -50%); width: {mask_w}%; height: {mask_h}px; background: {mask_bg}; {mask_backdrop} border-radius: 6px; z-index: 40; pointer-events: none; box-shadow: 0 0 10px rgba(0,0,0,0.4);"></div>
         """
 
-    # 2. Logo Overlay
     logo_html = ""
     if logo_file and os.path.exists(logo_file):
         try:
@@ -329,7 +319,6 @@ def get_tab3_js_mount_html(
         except Exception:
             pass
 
-    # 3. Subtitles
     if sub_lang == "English":
         sample_l1 = "A man standing on the mountain"
         sample_l2 = "( Sample English Subtitle )"
@@ -350,7 +339,6 @@ def get_tab3_js_mount_html(
     </div>
     """
 
-    # 4. Crop Fill Overlay (ဘယ်/ညာ နှင့် အပေါ်/အောက် ညီတူဖြတ်တောက်ပြီး အဖြူမဖြစ်စေဘဲ Blur/Color ဖြည့်ခြင်း)
     cut_w = (100.0 - float(crop_w_pct)) / 2.0
     cut_h = (100.0 - float(crop_h_pct)) / 2.0
     
@@ -527,7 +515,6 @@ def render_advanced_clip(
     ratio_choice, flip_h, scale_val, x_off, y_off,
     crop_w_pct, crop_h_pct,
     crop_fill_mode, crop_fill_color,
-    use_blur_bg, bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
     logo_file, logo_size, logo_x, logo_y,
@@ -543,15 +530,13 @@ def render_advanced_clip(
     tw, th = ratio_dims.get(ratio_choice, (1080, 1920))
 
     flip_filter = "hflip," if flip_h else ""
-    # ဘယ်/ညာ ညီတူ၊ အပေါ်/အောက် ညီတူ အလယ်ခေါင်မှ ဖြတ်တောက်ခြင်း (Symmetric Crop)
     crop_filter = f"crop=iw*{crop_w_pct/100.0:.2f}:ih*{crop_h_pct/100.0:.2f}:(iw-out_w)/2:(ih-out_h)/2,"
     color_filter = f"eq=brightness={bright_val - 1.0:.2f}:contrast={contrast_val:.2f}"
     
     fill_clean = crop_fill_color.lstrip("#")
     filter_chains = []
 
-    # ဖြတ်တောက်ထားသော ဘေးဘောင်နေရာများကို Blur သို့မဟုတ် Color ဖြင့် အစားထိုးခြင်း
-    if crop_fill_mode == "Blur (ဝေဝါးဖြည့်)" or use_blur_bg:
+    if crop_fill_mode == "Blur (ဝေဝါးဖြည့်)":
         filter_chains.append(
             f"[0:v]{flip_filter}{color_filter},split=2[fg_raw][bg_raw];"
             f"[bg_raw]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},boxblur=25:10,eq=brightness=-0.15[bg_blurred];"
@@ -725,7 +710,6 @@ def tab3_auto_pipeline(
     ratio, flip_h, scale_val, x_off, y_off,
     crop_w, crop_h,
     crop_fill_mode, crop_fill_color,
-    use_blur_bg, bg_color,
     bright_val, contrast_val,
     mask_enable, mask_type, mask_color, mask_opacity, mask_w, mask_h, mask_x, mask_y,
     logo_file, logo_size, logo_x, logo_y,
@@ -736,10 +720,8 @@ def tab3_auto_pipeline(
         return None, None, "", None, "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ကို စစ်ဆေးပေးပါ။"
 
     try:
-        # ၁။ Script ရေးသားခြင်း
         narration_script, model, dur_msg = run_gemini_video_analysis(target, ratio, voice_lang)
         
-        # ၂။ စာတန်းထိုးအတွက် ဘာသာပြန်ခြင်း
         subtitle_script = narration_script
         need_sub_trans = False
         if "Burmese" in voice_lang and sub_lang != "မြန်မာ (Burmese)":
@@ -754,7 +736,6 @@ def tab3_auto_pipeline(
         if need_sub_trans:
             subtitle_script = translate_to_target_language(narration_script, sub_lang)
 
-        # ၃။ အသံဖိုင်နှင့် စာတန်းထိုး ဖန်တီးခြင်း
         voice_code = VOICES_BY_LANG[voice_lang].get(voice_label, list(VOICES_BY_LANG[voice_lang].values())[0])
         audio_file = asyncio.run(
             generate_tts_file(narration_script, voice_code, speed, "tab3_voice.mp3")
@@ -763,7 +744,6 @@ def tab3_auto_pipeline(
         audio_dur = get_video_duration(audio_file) or 10.0
         srt_file, _ = generate_srt_and_zip(subtitle_script, total_target_duration=audio_dur, prefix="tab3_sub")
 
-        # ၄။ Video Render ပြုလုပ်ခြင်း (Crop Fill Mode နှင့် Color ပါဝင်ပြီးဖြစ်သည်)
         final_video = render_advanced_clip(
             source_video=target,
             tts_audio=audio_file,
@@ -780,8 +760,8 @@ def tab3_auto_pipeline(
             crop_h_pct=crop_h,
             crop_fill_mode=crop_fill_mode,
             crop_fill_color=crop_fill_color,
-            use_blur_bg=use_blur_bg,
-            bg_color=bg_color,
+            use_blur_bg=True,
+            bg_color="#000000",
             bright_val=bright_val,
             contrast_val=contrast_val,
             mask_enable=mask_enable,
@@ -1025,7 +1005,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             t3_ratio, t3_flip, t3_scale, t3_x_off, t3_y_off,
             t3_crop_w, t3_crop_h,
             t3_crop_fill_mode, t3_crop_fill_color,
-            gr.State(True), gr.State("#000000"),  # use_blur_bg & bg_color fallback states
             t3_bright, t3_contrast,
             t3_mask_enable, t3_mask_type, t3_mask_color, t3_mask_opacity, t3_mask_w, t3_mask_h, t3_mask_x, t3_mask_y,
             t3_logo_file, t3_logo_size, t3_logo_x, t3_logo_y,
@@ -1038,4 +1017,3 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
-
