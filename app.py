@@ -4,6 +4,8 @@ import time
 import zipfile
 import subprocess
 import asyncio
+import uuid
+from pathlib import Path
 import gradio as gr
 import edge_tts
 import yt_dlp
@@ -14,7 +16,7 @@ from google import genai
 # =========================================================
 APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
-SAVED_API_KEY = ""
+SAVED_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 # API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
@@ -27,6 +29,26 @@ VOICES = {
     "Thiha (အမျိုးသားအသံ) - Natural": "my-MM-ThihaNeural",
     "Nilar (အမျိုးသမီးအသံ) - Natural": "my-MM-NilarNeural",
 }
+
+# =========================================================
+# WORKSPACE & SANITIZE HELPERS
+# =========================================================
+BASE_DIR = Path("studio_workspace")
+BASE_DIR.mkdir(exist_ok=True)
+
+def unique_file(prefix, ext):
+    return str(BASE_DIR / f"{prefix}_{uuid.uuid4().hex[:10]}{ext}")
+
+def sanitize_video_path(input_path):
+    """ဗီဒီယိုနာမည်တွင် မြန်မာစာ သို့မဟုတ် ASCII မဟုတ်သော စာလုံးများပါပါက Error မတက်စေရန် Safe ဖြစ်သောနာမည်သို့ ကူးယူပြောင်းလဲပေးခြင်း"""
+    if not input_path or not os.path.exists(input_path):
+        return None
+    ext = os.path.splitext(input_path)[1]
+    if not ext:
+        ext = ".mp4"
+    safe_path = unique_file("input_video", ext)
+    shutil.copy(input_path, safe_path)
+    return safe_path
 
 # =========================================================
 # SYSTEM HELPERS
@@ -98,18 +120,18 @@ def generate_srt_and_zip(script_text, prefix="myanmar_recap"):
         srt_content += f"{idx}\n{seconds_to_srt_time(start_time)} --> {seconds_to_srt_time(end_time)}\n{line}\n\n"
         current_time = end_time
 
-    srt_filename = f"{prefix}_subtitle.srt"
-    zip_filename = f"{prefix}_subtitle.zip"
+    srt_filename = unique_file("subtitle", ".srt")
+    zip_filename = unique_file("subtitle", ".zip")
     with open(srt_filename, "w", encoding="utf-8-sig") as f:
         f.write(srt_content)
     with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
-        zipf.write(srt_filename, arcname=srt_filename)
+        zipf.write(srt_filename, arcname="myanmar_recap_subtitle.srt")
     return srt_filename, zip_filename
 
 def download_video_from_link(link):
     if not link or not link.strip():
         return None
-    output_template = "temp_downloaded_video.%(ext)s"
+    output_template = str(BASE_DIR / "temp_downloaded_video.%(ext)s")
     ydl_opts = {
         "format": "best[ext=mp4]/best",
         "outtmpl": output_template,
@@ -124,17 +146,17 @@ def download_video_from_link(link):
             info = ydl.extract_info(link.strip(), download=True)
             filename = ydl.prepare_filename(info)
             if os.path.exists(filename):
-                return filename
+                return sanitize_video_path(filename)
             base = os.path.splitext(filename)[0]
             for ext in [".mp4", ".mkv", ".webm", ".mov"]:
                 if os.path.exists(base + ext):
-                    return base + ext
+                    return sanitize_video_path(base + ext)
     except Exception as e:
         print("Download Error:", e)
     return None
 
 # =========================================================
-# DYNAMIC RATIO STYLING (Screen အပြည့် ကွက်တိပြသရန်)
+# DYNAMIC RATIO STYLING
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -211,6 +233,7 @@ def run_gemini_video_analysis(target_media, ratio_choice):
     global SAVED_API_KEY
     if not SAVED_API_KEY:
         raise ValueError("Gemini API Key မရှိသေးပါ။ 🔑 API Key Setting ထဲတွင် အရင်ထည့်သွင်းပေးပါ။")
+    
     valid, msg = validate_video_duration(target_media)
     if not valid:
         raise ValueError(msg)
@@ -244,30 +267,39 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     selected_voice = VOICES.get(voice_choice, "my-MM-ThihaNeural")
     rate_str = f"{int(speed_percent):+d}%"
     communicate = edge_tts.Communicate(clean_text, selected_voice, rate=rate_str)
-    await communicate.save(output_name)
-    srt_file, zip_file = generate_srt_and_zip(clean_text, prefix=output_name.replace(".mp3", ""))
-    return output_name, srt_file, zip_file
+    
+    mp3_path = unique_file("tts_audio", ".mp3")
+    await communicate.save(mp3_path)
+    srt_file, zip_file = generate_srt_and_zip(clean_text, prefix="myanmar_recap")
+    return mp3_path, srt_file, zip_file
 
 # =========================================================
 # TAB CONTROLLERS
 # =========================================================
 def tab1_analyze(v_file, v_url, ratio):
-    target = v_file if v_file else download_video_from_link(v_url)
+    target = None
+    if v_file:
+        if isinstance(v_file, dict):
+            v_path = v_file.get("path") or v_file.get("name")
+        else:
+            v_path = v_file
+        target = sanitize_video_path(v_path)
+    else:
+        target = download_video_from_link(v_url)
+
     if not target or not os.path.exists(target):
-        # script_out, tts_input_out, status, srt, zip_f
         return "", "", "⚠️ Video ရှာမတွေ့ပါ။ ဖိုင် သို့မဟုတ် Link ထည့်ပါ။", None, None
     try:
         clean_text, model, dur_msg = run_gemini_video_analysis(target, ratio)
         srt, zip_f = generate_srt_and_zip(clean_text)
         status = f"✅ Script ရေးသားပြီးပါပြီ! (Model: {model})\n{dur_msg}"
-        # Script ထွက်လာသည်နှင့် Tab 1 ရော Tab 2 (TTS Input) သို့ပါ တပြိုင်နက် ပေးပို့ပါမည်
         return clean_text, clean_text, status, srt, zip_f
     except Exception as e:
         return "", "", f"❌ Error: {str(e)}", None, None
 
 def tab2_tts(text, voice, speed):
     try:
-        mp3, srt, zip_f = asyncio.run(generate_myanmar_tts(text, voice, speed, "tab2_output.mp3"))
+        mp3, srt, zip_f = asyncio.run(generate_myanmar_tts(text, voice, speed))
         return mp3, mp3, srt, zip_f
     except Exception as e:
         print("Tab 2 Error:", e)
@@ -283,7 +315,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         # --- API KEY TAB ---
         with gr.TabItem("🔑 API Key Setting", id="tab_key"):
             gr.Markdown("### 🔐 Gemini API Key ထည့်သွင်းပါ")
-            api_key_input = gr.Textbox(label="Gemini API Key", type="password", placeholder="AIzaSy...")
+            api_key_input = gr.Textbox(label="Gemini API Key", type="password", placeholder="AIzaSy...", value=SAVED_API_KEY)
             save_key_btn = gr.Button("💾 API Key သိမ်းမည်", variant="primary")
             key_status = gr.Markdown("")
             save_key_btn.click(save_api_key, inputs=api_key_input, outputs=key_status)
@@ -304,8 +336,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
-                    
-                    # Tab 2 သို့ တိုက်ရိုက်သွားရောက်နိုင်သည့် ခလုတ်
                     go_to_tts_btn = gr.Button("🎙️ Tab 2 (TTS) သို့ သွားရောက် အသံထုတ်မည် ➡️", variant="secondary")
 
             with gr.Row():
@@ -334,14 +364,12 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
     
-    # Script ထွက်လာသည်နှင့် Tab 1 သာမက Tab 2 ၏ v2_input_text ထဲသို့ တိုက်ရိုက် Auto ထည့်သွင်းပေးခြင်း
     v1_gen_btn.click(
         tab1_analyze, 
         inputs=[v1_file, v1_url, v1_ratio], 
         outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
     )
 
-    # ခလုတ်နှိပ်ပါက Tab 2 သို့ တန်းရောက်သွားစေခြင်း
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
 # Render Server Launch Port
