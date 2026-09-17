@@ -40,14 +40,15 @@ def unique_file(prefix, ext):
     return str(BASE_DIR / f"{prefix}_{uuid.uuid4().hex[:10]}{ext}")
 
 def sanitize_video_path(input_path):
-    """ဗီဒီယိုနာမည် သို့မဟုတ် path တွင် မြန်မာစာ/Unicode ပါပါက ASCII error တက်ခြင်းမှ ကာကွယ်ရန် English စာလုံးသက်သက်ဖြင့် workspace သို့ ကူးယူပေးခြင်း"""
+    """ဗီဒီယိုနာမည်တွင် Unicode/Non-ASCII ပါပါက ASCII error လုံးဝမတက်စေရန် အင်္ဂလိပ်စာလုံးသက်သက်ဖြင့် workspace သို့ ကူးယူပေးခြင်း"""
     if not input_path or not os.path.exists(input_path):
         return None
     try:
         ext = os.path.splitext(input_path)[1]
         if not ext:
             ext = ".mp4"
-        safe_path = unique_file("safe_video", ext)
+        # 100% ASCII သက်သက်ဖြစ်သော နာမည်သစ်ဖြင့် ကူးယူမည်
+        safe_path = str(BASE_DIR / f"clean_video_{uuid.uuid4().hex[:8]}{ext}")
         shutil.copy2(input_path, safe_path)
         return safe_path
     except Exception as e:
@@ -243,7 +244,10 @@ def run_gemini_video_analysis(target_media, ratio_choice):
         raise ValueError(msg)
 
     client = genai.Client(api_key=SAVED_API_KEY)
-    uploaded_file = client.files.upload(file=target_media)
+    
+    # 100% Safe ဖြစ်အောင် Path ကို ထပ်မံ Sanitize လုပ်ခြင်း
+    safe_target = sanitize_video_path(target_media)
+    uploaded_file = client.files.upload(file=safe_target)
     
     start_wait = time.time()
     while True:
