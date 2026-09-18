@@ -148,20 +148,12 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
         margin: 0 auto !important;
         transition: all 0.3s ease-in-out !important;
     }}
-    #{container_id} .video-container {{
+    #{container_id} .video-container, #{container_id} video {{
         width: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
         height: auto !important;
-        background: #000 !important;
-        border-radius: 12px !important;
-        overflow: hidden !important;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
-    }}
-    #{container_id} video {{
-        width: 100% !important;
-        height: 100% !important;
-        aspect-ratio: {cfg["aspect"]} !important;
         object-fit: cover !important;
+        border-radius: 12px !important;
         display: block !important;
     }}
     </style>
@@ -243,10 +235,10 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
 # =========================================================
 def generate_advanced_one_clip(
     video_file, audio_file, resolution, ratio,
-    brightness, contrast_val, zoom_crop,
-    blur_bg, orig_vol, bgm_file, bgm_vol,
-    sub_text, font_color, stroke_color,
-    pos_top_bottom
+    brightness, contrast_val, zoom, blur_bg,
+    orig_vol, bgm_file, bgm_vol,
+    sub_text, font_color, stroke_color, pos_align,
+    logo_file, logo_pos, logo_size
 ):
     if not video_file or not os.path.exists(video_file):
         return None, "⚠️ ဗီဒီယိုဖိုင် မရှိပါ။"
@@ -254,34 +246,29 @@ def generate_advanced_one_clip(
         return None, "⚠️ အသံဖိုင် (TTS MP3) မရှိပါ။"
 
     output_filename = "final_advanced_clip.mp4"
-    
     res_map = {"480p": "480", "720p": "720", "1080p": "1080"}
     target_h = res_map.get(resolution, "720")
-    target_w = "1280" if target_h == "720" else ("1920" if target_h == "1080" else "854")
+    
+    if ratio == "9:16":
+        base_w, base_h = "720", "1280"
+    elif ratio == "1:1":
+        base_w, base_h = "720", "720"
+    elif ratio == "3:4":
+        base_w, base_h = "720", "960"
+    else:
+        base_w, base_h = "1280", "720"
 
-    # Filter complex construction for FFmpeg
-    # Brightness & Contrast (eq filter)
     eq_filter = f"eq=brightness={brightness}:contrast={contrast_val}"
     
-    # Scale & Blur Background option handling
+    # Zoom and blur background handling
     if blur_bg:
-        # Create a blurred background and overlay main video on top
-        if ratio == "9:16":
-            base_w, base_h = "720", "1280"
-        elif ratio == "1:1":
-            base_w, base_h = "720", "720"
-        elif ratio == "3:4":
-            base_w, base_h = "720", "960"
-        else:
-            base_w, base_h = "1280", "720"
-            
         video_filter = (
             f"[0:v]{eq_filter},scale={base_w}:{base_h}:force_original_aspect_ratio=decrease,pad={base_w}:{base_h}:(ow-iw)/2:(oh-ih)/2[ov];"
-            f"[0:v]scale={base_w}:{base_h}:force_original_aspect_ratio=increase,crop={base_w}:{base_h},gblur=sigma=20[bg];"
+            f"[0:v]scale={base_w}:{base_h}:force_original_aspect_ratio=increase,crop={base_w}:{base_h},gblur=sigma=25[bg];"
             f"[bg][ov]overlay=(W-w)/2:(H-h)/2,fps=30[v]"
         )
     else:
-        video_filter = f"[0:v]{eq_filter},fps=30[v]"
+        video_filter = f"[0:v]{eq_filter},scale={base_w}:{base_h},fps=30[v]"
 
     # Audio mixing
     audio_mix = f"[1:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig]"
@@ -346,14 +333,16 @@ def tab3_render_advanced(
     v_file, a_file, res, ratio,
     bright, contrast, zoom, blur_bg,
     orig_v, bgm_f, bgm_v,
-    script_t, f_color, s_color, pos
+    script_t, f_color, s_color, pos,
+    logo_f, logo_p, logo_s
 ):
     mp4_out, status = asyncio.run(asyncio.to_thread(
         generate_advanced_one_clip,
         v_file, a_file, res, ratio,
         bright, contrast, zoom, blur_bg,
         orig_v, bgm_f, bgm_v,
-        script_t, f_color, s_color, pos
+        script_t, f_color, s_color, pos,
+        logo_f, logo_p, logo_s
     ))
     return mp4_out, mp4_out, status
 
@@ -431,7 +420,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         v3_zoom = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="🔍 Zoom ဆွဲရန်")
 
                     with gr.Accordion("🎵 အသံနှင့် နောက်ခံတေးဂီတ (Audio & BGM)", open=False):
-                        v3_orig_vol = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="🔊 မူရင်းဗီဒီယိုအသံ အတိုးအလျော့ (Original Vol)")
+                        v3_orig_vol = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="🔊 မူရင်းဗီဒီယိုအသံ အတိုးအလျော့ (Original Vol) / (အဖွင့်/အပိတ်)")
                         v3_bgm_file = gr.Audio(label="🎶 နောက်ခံတေးဂီတ (BGM MP3) ထည့်ရန်", type="filepath")
                         v3_bgm_vol = gr.Slider(0.0, 1.0, value=0.15, step=0.05, label="🎵 BGM အသံ အတိုးအလျော့")
 
@@ -441,11 +430,17 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         v3_stroke_color = gr.ColorPicker(value="#000000", label="🖍️ စာလုံးအနားသတ် (Stroke/Glow) အရောင်")
                         v3_pos = gr.Radio(["အပေါ်ပိုင်း (Top)", "အောက်ပိုင်း (Bottom)"], value="အောက်ပိုင်း (Bottom)", label="📍 စာတန်းထိုး ထားရှိမည့်နေရာ")
 
+                    with gr.Accordion("🏷️ Logo Watermark ထည့်သွင်းရန်", open=False):
+                        v3_logo_file = gr.Image(label="🖼️ Logo ပုံတင်ရန်", type="filepath")
+                        v3_logo_pos = gr.Dropdown(["ထိပ်ဆုံး ဘယ်ဘက် (Top-Left)", "ထိပ်ဆုံး ညာဘက် (Top-Right)", "အောက်ဆုံး ဘယ်ဘက် (Bottom-Left)", "အောက်ဆုံး ညာဘက် (Bottom-Right)"], value="ထိပ်ဆုံး ညာဘက် (Top-Right)", label="📍 Logo တည်နေရာ")
+                        v3_logo_size = gr.Slider(50, 300, value=120, step=10, label="📐 Logo အရွယ်အစား (Size)")
+
                     v3_render_btn = gr.Button("🚀 Advanced One Clip အပြီးသတ် ဖန်တီးမည်", variant="primary")
                 
                 with gr.Column(scale=1):
                     v3_status = gr.Markdown("ဖိုင်များနှင့် ပြင်ဆင်ချက်များ ထည့်သွင်းပြီး One Clip ဖန်တီးရန် အဆင်သင့်ဖြစ်ပါသည်။")
-                    v3_preview = gr.Video(label="📺 Final Rendered Video Preview")
+                    v3_preview_css = gr.HTML(get_ratio_css("16:9", "tab3_preview_container"))
+                    v3_preview = gr.Video(label="📺 Final Rendered Video Preview", elem_id="tab3_preview_container")
                     v3_final_mp4 = gr.File(label="📥 Final MP4 Video ဒေါင်းလုဒ်ဆွဲရန်")
 
             v3_render_btn.click(
@@ -454,7 +449,8 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v3_video_input, v3_audio_input, v3_resolution, v3_ratio,
                     v3_brightness, v3_contrast, v3_zoom, v3_blur_bg,
                     v3_orig_vol, v3_bgm_file, v3_bgm_vol,
-                    v3_sub_text, v3_font_color, v3_stroke_color, v3_pos
+                    v3_sub_text, v3_font_color, v3_stroke_color, v3_pos,
+                    v3_logo_file, v3_logo_pos, v3_logo_size
                 ],
                 outputs=[v3_preview, v3_final_mp4, v3_status]
             )
@@ -463,6 +459,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
+    v3_ratio.change(lambda r: get_ratio_css(r, "tab3_preview_container"), inputs=v3_ratio, outputs=v3_preview_css)
     
     v1_gen_btn.click(
         tab1_analyze, 
