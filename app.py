@@ -231,7 +231,7 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     return output_name, srt_file, zip_file
 
 # =========================================================
-# ADVANCED TAB 3: ONE CLIP STUDIO RENDERER (FIXED)
+# ADVANCED TAB 3: ONE CLIP STUDIO RENDERER (FULL OPTIONS)
 # =========================================================
 def generate_advanced_one_clip(
     video_file, audio_file, resolution, ratio,
@@ -259,10 +259,29 @@ def generate_advanced_one_clip(
     else:
         base_w, base_h = "1280", "720"
 
+    # မူရင်းဗီဒီယို Blur လုံးဝမပါဘဲ သာမန်အတိုင်း ချိန်ဆပြသမည် (Zoom & Scale)
     eq_filter = f"eq=brightness={brightness}:contrast={contrast_val}"
-    video_filter = f"[0:v]{eq_filter},scale={base_w}:{base_h},fps=30[v]"
+    video_filter = f"[0:v]{eq_filter},scale={base_w}:{base_h},fps=30"
 
-    # ပြင်ဆင်ပြီးသော Audio Mixing Filter (Error ကင်းရှင်းစေရန်)
+    # စာတန်းထိုးနှင့် အောက်ခံ Blur Box ထည့်သွင်းခြင်း (Drawtext & Position X/Y)
+    if sub_text and sub_text.strip():
+        # HTML color format ကို FFmpeg color format သို့ ပြောင်းရန် (#RRGGBB -> 0xRRGGBB)
+        fc = font_color.replace("#", "0x") if font_color else "0xFFFF00"
+        sc = stroke_color.replace("#", "0x") if stroke_color else "0x000000"
+        
+        # Position formulas based on user X/Y sliders
+        x_expr = f"(w-text_w)/2+({sub_pos_x})"
+        y_expr = f"h-text_h-{max(50, 100 + sub_pos_y)}"
+
+        if sub_blur_bg:
+            # စာတန်းထိုးနောက်ခံအတွက် box နှင့် boxcolor ထည့်ပေးခြင်း
+            video_filter += f",drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:box=1:boxcolor=black@0.5:boxborderw=10:x={x_expr}:y={y_expr}"
+        else:
+            video_filter += f",drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:x={x_expr}:y={y_expr}"
+
+    video_filter += "[v]"
+
+    # Audio Mixing Configuration (Error လုံးဝကင်းရှင်းသော ပုံစံ)
     has_bgm = bool(bgm_file and os.path.exists(bgm_file))
     if has_bgm:
         audio_mix = f"[1:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig];[2:a]volume={bgm_vol},aloop=loop=-1:size=2e9[bgm];[voice][orig][bgm]amix=inputs=3:duration=first:dropout_transition=2[a]"
@@ -417,14 +436,14 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         v3_bgm_file = gr.Audio(label="🎶 နောက်ခံတေးဂီတ (BGM MP3) ထည့်ရန် (Optional)", type="filepath")
                         v3_bgm_vol = gr.Slider(0.0, 1.0, value=0.15, step=0.05, label="🎵 BGM အသံ အတိုးအလျော့")
 
-                    with gr.Accordion("💬 စာတန်းထိုး ဒီဇိုင်းနှင့် နေရာရွှေ့ခြင်း (Subtitles, Blur & Position)", open=False):
-                        v3_sub_text = gr.Textbox(label="📝 စာတန်းထိုးစာသား", lines=4)
+                    with gr.Accordion("💬 စာတန်းထိုး ဒီဇိုင်းနှင့် နေရာရွှေ့ခြင်း (Subtitles, Blur & Position)", open=True):
+                        v3_sub_text = gr.Textbox(label="📝 စာတန်းထိုးစာသား", lines=4, placeholder="ဗီဒီယိုပေါ်တွင် ဖော်ပြမည့် စာတန်းထိုးများကို ဤနေရာတွင် ထည့်ပါ...")
                         v3_font_color = gr.ColorPicker(value="#FFFF00", label="🎨 စာလုံးအရောင် ရွေးရန်")
                         v3_stroke_color = gr.ColorPicker(value="#000000", label="🖍️ စာလုံးအနားသတ် အရောင်")
                         v3_font_size = gr.Slider(16, 72, value=32, step=2, label="🔤 စာလုံးအရွယ်အစား (Font Size)")
                         v3_sub_blur = gr.Checkbox(label="🌫️ စာတန်းထိုး နောက်ခံ Blur (ဝေဝါးမှု) ထည့်မည်", value=True)
                         v3_pos_x = gr.Slider(-200, 200, value=0, step=10, label="↔️ ဘယ်/ညာ ရွှေ့ရန် (Position X)")
-                        v3_pos_y = gr.Slider(-400, 400, value=250, step=10, label="↕️ အပေါ်/အောက် ရွှေ့ရန် (Position Y)")
+                        v3_pos_y = gr.Slider(-400, 400, value=0, step=10, label="↕️ အပေါ်/အောက် ရွှေ့ရန် (Position Y)")
 
                     with gr.Accordion("🏷️ Logo Watermark ထည့်သွင်းရန်", open=False):
                         v3_logo_file = gr.Image(label="🖼️ Logo ပုံတင်ရန်", type="filepath")
