@@ -1,9 +1,17 @@
 import os
+import sys
+import time
 import asyncio
 import subprocess
 import edge_tts
 import gradio as gr
 from google import genai
+
+# System default encoding ကို UTF-8 သို့ အတင်းအကြပ်ပြောင်းရန် (Render အတွက် အရေးကြီးသည်)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding='utf-8')
 
 # =========================================================
 # GLOBAL CONFIG & UTILS
@@ -21,7 +29,6 @@ def save_api_key(key):
     return "❌ ကျေးဇူးပြု၍ မှန်ကန်သော API Key ထည့်ပါ။"
 
 def download_video_from_link(url):
-    # yt-dlp ကိုအသုံးပြု၍ YouTube သို့မဟုတ် အခြားလင့်ခ်များမှ ဗီဒီယိုဒေါင်းလုပ်ဆွဲရန်
     if not url:
         return None
     output_filename = "downloaded_video.mp4"
@@ -55,14 +62,15 @@ def tab1_analyze(v_file, v_url, ratio):
 
     try:
         client = genai.Client(api_key=api_key)
-        # ဗီဒီယိုဖိုင်ကို Gemini API သို့ Upload တင်ခြင်း
         print("Uploading video to Gemini...")
-        video_file = client.files.upload(file=video_path)
         
-        # Upload ပြီးဆုံးသည်အထိ ခေတ္တစောင့်ဆိုင်းခြင်း
+        # Binary mode ဖြင့် ဖိုင်ကိုဖွင့်၍ Upload တင်ခြင်း (Unicode Error ကင်းစေရန်)
+        with open(video_path, "rb") as f:
+            video_file = client.files.upload(file=f)
+        
+        # Upload ပြီးဆုံးသည်အထိ စောင့်ဆိုင်းခြင်း
         while video_file.state.name == "PROCESSING":
-            import time
-            time.sleep(2)
+            time.sleep(3)
             video_file = client.files.get(name=video_file.name)
 
         prompt = (
@@ -76,7 +84,7 @@ def tab1_analyze(v_file, v_url, ratio):
         )
         script_text = response.text
 
-        # SRT စာတန်းထိုးဖိုင် ဖန်တီးခြင်း
+        # SRT စာတန်းထိုးဖိုင်ကို UTF-8 ဖြင့် သိမ်းဆည်းခြင်း
         srt_path = "subtitles.srt"
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write("1\n00:00:01,000 --> 00:00:10,000\n" + script_text[:100].replace('\n', ' ') + "\n")
