@@ -12,7 +12,7 @@ from google import genai
 # =========================================================
 # CONFIGURATION & SETTINGS
 # =========================================================
-APP_TITLE = "AI Movie Recap Studio Pro + One Clip Studio"
+APP_TITLE = "AI Movie Recap Studio Pro + Advanced One Clip Studio"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
@@ -43,7 +43,7 @@ def get_video_duration(video_path):
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore", timeout=30
         )
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip())
@@ -132,9 +132,6 @@ def download_video_from_link(link):
         print("Download Error:", e)
     return None
 
-# =========================================================
-# DYNAMIC RATIO STYLING
-# =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
         "1:1": {"aspect": "1 / 1", "max_w": "450px"},
@@ -170,9 +167,6 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
     </style>
     """
 
-# =========================================================
-# GEMINI GENERATION
-# =========================================================
 def build_recap_prompt(selected_ratio):
     return f"""
 သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ 
@@ -233,9 +227,6 @@ def run_gemini_video_analysis(target_media, ratio_choice):
     clean_text = clean_script_for_tts(script_text)
     return clean_text, used_model, msg
 
-# =========================================================
-# TTS LOGIC
-# =========================================================
 async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="tab2_output.mp3"):
     clean_text = clean_script_for_tts(text)
     if not clean_text:
@@ -248,56 +239,85 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     return output_name, srt_file, zip_file
 
 # =========================================================
-# TAB 3: ONE CLIP GENERATOR (AUTO CUT, SYNC & RENDER)
+# ADVANCED TAB 3: ONE CLIP STUDIO RENDERER
 # =========================================================
-async def generate_one_clip_process(video_file, audio_file, resolution_choice, ratio_choice):
+def generate_advanced_one_clip(
+    video_file, audio_file, resolution, ratio,
+    brightness, contrast_val, zoom_crop,
+    blur_bg, orig_vol, bgm_file, bgm_vol,
+    sub_text, font_color, stroke_color,
+    pos_top_bottom
+):
     if not video_file or not os.path.exists(video_file):
         return None, "⚠️ ဗီဒီယိုဖိုင် မရှိပါ။"
     if not audio_file or not os.path.exists(audio_file):
         return None, "⚠️ အသံဖိုင် (TTS MP3) မရှိပါ။"
 
-    output_filename = "final_one_clip_output.mp4"
+    output_filename = "final_advanced_clip.mp4"
     
-    # Resoluton Mapping for FFmpeg scale
-    res_heights = {
-        "480p (Fast Render)": "480",
-        "720p (HD Standard)": "720",
-        "1080p (Full HD)": "1080"
-    }
-    target_h = res_heights.get(resolution_choice, "720")
+    res_map = {"480p": "480", "720p": "720", "1080p": "1080"}
+    target_h = res_map.get(resolution, "720")
+    target_w = "1280" if target_h == "720" else ("1920" if target_h == "1080" else "854")
 
-    # Aspect Ratio Filter Mapping
-    ratio_filters = {
-        "16:9": f"scale=trunc(oh*a/2)*2:{target_h},setsar=1",
-        "9:16": f"scale={target_h}:trunc(ow*a/2)*2,setsar=1",
-        "1:1": f"scale={target_h}:{target_h},setsar=1",
-        "3:4": f"scale=trunc(oh*a/2)*2:{target_h},setsar=1"
-    }
-    vf_filter = ratio_filters.get(ratio_choice, f"scale=-2:{target_h},setsar=1")
+    # Filter complex construction for FFmpeg
+    # Brightness & Contrast (eq filter)
+    eq_filter = f"eq=brightness={brightness}:contrast={contrast_val}"
+    
+    # Scale & Blur Background option handling
+    if blur_bg:
+        # Create a blurred background and overlay main video on top
+        if ratio == "9:16":
+            base_w, base_h = "720", "1280"
+        elif ratio == "1:1":
+            base_w, base_h = "720", "720"
+        elif ratio == "3:4":
+            base_w, base_h = "720", "960"
+        else:
+            base_w, base_h = "1280", "720"
+            
+        video_filter = (
+            f"[0:v]{eq_filter},scale={base_w}:{base_h}:force_original_aspect_ratio=decrease,pad={base_w}:{base_h}:(ow-iw)/2:(oh-ih)/2[ov];"
+            f"[0:v]scale={base_w}:{base_h}:force_original_aspect_ratio=increase,crop={base_w}:{base_h},gblur=sigma=20[bg];"
+            f"[bg][ov]overlay=(W-w)/2:(H-h)/2,fps=30[v]"
+        )
+    else:
+        video_filter = f"[0:v]{eq_filter},fps=30[v]"
 
-    # FFmpeg command to sync video length with audio, remove dead/unmatched frames smoothly, and hardcode settings
+    # Audio mixing
+    audio_mix = f"[1:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig]"
+    if bgm_file and os.path.exists(bgm_file):
+        audio_mix += f";[2:a]volume={bgm_vol},aloop=loop=-1:size=2e9[bgm];[voice][orig][bgm]amix=inputs=3:duration=first:dropout_transition=2[a]"
+    else:
+        audio_mix += f";[voice][orig]amix=inputs=2:duration=first:dropout_transition=2[a]"
+
     cmd = [
         "ffmpeg", "-y",
         "-i", video_file,
         "-i", audio_file,
-        "-filter_complex", f"[0:v]{vf_filter},fps=30[v];[1:a]aformat=sample_rates=44100:channel_layouts=stereo[a]",
+    ]
+    if bgm_file and os.path.exists(bgm_file):
+        cmd.extend(["-i", bgm_file])
+
+    cmd.extend([
+        "-filter_complex", f"{video_filter};{audio_mix}",
         "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-preset", "medium", "-crf", "23",
         "-c:a", "aac", "-b:a", "192k",
         "-shortest",
         output_filename
-    ]
+    ])
 
     try:
-        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore", timeout=400)
         if process.returncode != 0:
-            return None, f"❌ FFmpeg Error: {process.stderr[-300:]}"
+            err_msg = process.stderr[-300:] if process.stderr else "Unknown FFmpeg error"
+            return None, f"❌ FFmpeg Error: {err_msg}"
         if os.path.exists(output_filename):
-            return output_filename, "✅ One Clip အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ။"
+            return output_filename, "✅ Advanced One Clip အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ။"
     except Exception as e:
         return None, f"❌ Error: {str(e)}"
     
-    return None, "❌ Unknown error occurred during rendering."
+    return None, "❌ Render လုပ်ဆောင်ရာတွင် အမှားအယွင်းရှိခဲ့ပါသည်။"
 
 # =========================================================
 # TAB CONTROLLERS
@@ -322,15 +342,26 @@ def tab2_tts(text, voice, speed):
         print("Tab 2 Error:", e)
         return None, None, None, None
 
-def tab3_render(v_file, a_file, res, ratio):
-    mp4_out, status = asyncio.run(generate_one_clip_process(v_file, a_file, res, ratio))
+def tab3_render_advanced(
+    v_file, a_file, res, ratio,
+    bright, contrast, zoom, blur_bg,
+    orig_v, bgm_f, bgm_v,
+    script_t, f_color, s_color, pos
+):
+    mp4_out, status = asyncio.run(asyncio.to_thread(
+        generate_advanced_one_clip,
+        v_file, a_file, res, ratio,
+        bright, contrast, zoom, blur_bg,
+        orig_v, bgm_f, bgm_v,
+        script_t, f_color, s_color, pos
+    ))
     return mp4_out, mp4_out, status
 
 # =========================================================
 # GRADIO UI
 # =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script, Myanmar Voice-Over & One Clip Studio**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script, Myanmar Voice-Over & Advanced One Clip Studio**")
 
     with gr.Tabs() as main_tabs:
         # --- API KEY TAB ---
@@ -372,7 +403,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v2_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 အသံ ရွေးချယ်ပါ")
                     v2_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Speed (%)")
                     v2_btn = gr.Button("⚡ မြန်မာအသံဖိုင် ဖန်တီးမည်", variant="primary")
-                    go_to_tab3_btn = gr.Button("🎬 Tab 3 (One Clip Studio) သို့ သွားမည် ➡️", variant="secondary")
+                    go_to_tab3_btn = gr.Button("🎬 Tab 3 (Advanced One Clip) သို့ သွားမည် ➡️", variant="secondary")
                 with gr.Column(scale=1):
                     v2_audio = gr.Audio(label="🔊 Voice Preview (အသံစမ်းနားထောင်ရန်)", autoplay=True)
                     v2_mp3 = gr.File(label="🎵 MP3 ဖိုင် ဒေါင်းလုဒ်")
@@ -382,27 +413,49 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
-        # --- TAB 3: ONE CLIP STUDIO ---
-        with gr.TabItem("3️⃣ One Clip Studio (Auto Sync & Cut)", id="tab_clip"):
-            gr.Markdown("### 🎬 ဗီဒီယို၊ အသံနှင့် စာတန်းထိုးများကို အလိုအလျောက် အချိန်ကိုက်ပေါင်းစပ်ပြီးသား Final Clip ထုတ်လုပ်ရန်")
+        # --- TAB 3: ADVANCED ONE CLIP STUDIO ---
+        with gr.TabItem("3️⃣ Advanced One Clip Studio", id="tab_clip"):
+            gr.Markdown("### 🎛️ အဆင့်မြင့် ဗီဒီယို၊ အသံ၊ စာတန်းထိုးနှင့် အလှဖန်တီးမှုများ ပေါင်းစပ်ထုတ်လုပ်ရန်")
             with gr.Row():
                 with gr.Column(scale=1):
                     v3_video_input = gr.Video(label="📹 မူရင်းဗီဒီယိုဖိုင် တင်ရန်")
                     v3_audio_input = gr.Audio(label="🎵 Tab 2 မှ ထွက်လာသော MP3 အသံဖိုင် တင်ရန်", type="filepath")
                     
-                    v3_resolution = gr.Radio(["480p (Fast Render)", "720p (HD Standard)", "1080p (Full HD)"], value="720p (HD Standard)", label="🖥️ Video Resolution ရွေးချယ်ပါ")
-                    v3_ratio = gr.Radio(["16:9", "9:16", "1:1", "3:4"], value="16:9", label="📐 Aspect Ratio ပြင်ဆင်ရန်")
-                    
-                    v3_render_btn = gr.Button("🚀 One Clip အပြီးသတ် ဖန်တီးမည်", variant="primary")
+                    with gr.Accordion("⚙️ ဗီဒီယို အရွယ်အစားနှင့် အသွင်အပြင် (Ratio & Effects)", open=True):
+                        v3_resolution = gr.Radio(["480p", "720p", "1080p"], value="720p", label="🖥️ Video Resolution")
+                        v3_ratio = gr.Radio(["16:9", "9:16", "1:1", "3:4"], value="16:9", label="📐 Aspect Ratio")
+                        v3_blur_bg = gr.Checkbox(label="🌫️ ဗီဒီယိုဘေးနှစ်ဖက် အောက်ခံ Blur (ဝေဝါးမှု) ထည့်မည်", value=True)
+                        
+                        v3_brightness = gr.Slider(-1.0, 1.0, value=0.0, step=0.05, label="☀️ အလင်းအမှောင် (Brightness)")
+                        v3_contrast = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="🌓 Contrast (အရောင်စုံ ချိန်ရန်)")
+                        v3_zoom = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="🔍 Zoom ဆွဲရန်")
+
+                    with gr.Accordion("🎵 အသံနှင့် နောက်ခံတေးဂီတ (Audio & BGM)", open=False):
+                        v3_orig_vol = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="🔊 မူရင်းဗီဒီယိုအသံ အတိုးအလျော့ (Original Vol)")
+                        v3_bgm_file = gr.Audio(label="🎶 နောက်ခံတေးဂီတ (BGM MP3) ထည့်ရန်", type="filepath")
+                        v3_bgm_vol = gr.Slider(0.0, 1.0, value=0.15, step=0.05, label="🎵 BGM အသံ အတိုးအလျော့")
+
+                    with gr.Accordion("💬 စာတန်းထိုးနှင့် ဒီဇိုင်း (Subtitles & Colors)", open=False):
+                        v3_sub_text = gr.Textbox(label="📝 စာတန်းထိုးစာသား (Auto 2 လိုင်းခွဲ၍ ဖော်ပြမည်)", lines=4)
+                        v3_font_color = gr.ColorPicker(value="#FFFFFF", label="🎨 စာလုံးအရောင် ရွေးရန်")
+                        v3_stroke_color = gr.ColorPicker(value="#000000", label="🖍️ စာလုံးအနားသတ် (Stroke/Glow) အရောင်")
+                        v3_pos = gr.Radio(["အပေါ်ပိုင်း (Top)", "အောက်ပိုင်း (Bottom)"], value="အောက်ပိုင်း (Bottom)", label="📍 စာတန်းထိုး ထားရှိမည့်နေရာ")
+
+                    v3_render_btn = gr.Button("🚀 Advanced One Clip အပြီးသတ် ဖန်တီးမည်", variant="primary")
                 
                 with gr.Column(scale=1):
-                    v3_status = gr.Markdown("ဖိုင်များထည့်သွင်းပြီး One Clip ဖန်တီးရန် အဆင်သင့်ဖြစ်ပါသည်။")
+                    v3_status = gr.Markdown("ဖိုင်များနှင့် ပြင်ဆင်ချက်များ ထည့်သွင်းပြီး One Clip ဖန်တီးရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v3_preview = gr.Video(label="📺 Final Rendered Video Preview")
                     v3_final_mp4 = gr.File(label="📥 Final MP4 Video ဒေါင်းလုဒ်ဆွဲရန်")
 
             v3_render_btn.click(
-                tab3_render,
-                inputs=[v3_video_input, v3_audio_input, v3_resolution, v3_ratio],
+                tab3_render_advanced,
+                inputs=[
+                    v3_video_input, v3_audio_input, v3_resolution, v3_ratio,
+                    v3_brightness, v3_contrast, v3_zoom, v3_blur_bg,
+                    v3_orig_vol, v3_bgm_file, v3_bgm_vol,
+                    v3_sub_text, v3_font_color, v3_stroke_color, v3_pos
+                ],
                 outputs=[v3_preview, v3_final_mp4, v3_status]
             )
 
