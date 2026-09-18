@@ -260,17 +260,14 @@ def generate_advanced_one_clip(
     else:
         base_w, base_h = "1280", "720"
 
-    # ဗီဒီယိုအရွယ်အစားနှင့် အသွင်အပြင် (Zoom, Scale, Padding လုံးဝမပါဘဲ အတိအကျပြသရန်)
     eq_filter = f"eq=brightness={brightness}:contrast={contrast_val}"
     video_filter = f"[0:v]{eq_filter},scale={base_w}:{base_h}:force_original_aspect_ratio=decrease,pad={base_w}:{base_h}:(ow-iw)/2:(oh-ih)/2,fps=30[v_base]"
 
     current_v = "v_base"
     filter_chains = [video_filter]
 
-    # Logo Watermark ထည့်သွင်းခြင်း
     has_logo = bool(logo_file and os.path.exists(logo_file))
     if has_logo:
-        # Logo position mapping
         if "Top-Left" in logo_pos or "ဘယ်ဘက်" in logo_pos and "ထိပ်" in logo_pos:
             logo_x, logo_y = "10", "10"
         elif "Top-Right" in logo_pos or "ညာဘက်" in logo_pos and "ထိပ်" in logo_pos:
@@ -287,7 +284,6 @@ def generate_advanced_one_clip(
     else:
         audio_input_idx = 1
 
-    # စာတန်းထိုးနှင့် အောက်ခံ Blur Box ထည့်သွင်းခြင်း
     if sub_text and sub_text.strip():
         fc = font_color.replace("#", "0x") if font_color else "0xFFFF00"
         sc = stroke_color.replace("#", "0x") if stroke_color else "0x000000"
@@ -301,10 +297,8 @@ def generate_advanced_one_clip(
             filter_chains.append(f"[{current_v}]drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:x={x_expr}:y={y_expr}[v_sub]")
         current_v = "v_sub"
 
-    # Audio Mixing Configuration
     has_bgm = bool(bgm_file and os.path.exists(bgm_file))
     if has_logo and has_bgm:
-        # Inputs: 0=video, 1=logo, 2=audio(tts), 3=bgm
         audio_mix = f"[{audio_input_idx}:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig];[3:a]volume={bgm_vol},aloop=loop=-1:size=2e9[bgm];[voice][orig][bgm]amix=inputs=3:duration=first:dropout_transition=2[a]"
     elif has_logo and not has_bgm:
         audio_mix = f"[{audio_input_idx}:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig];[voice][orig]amix=inputs=2:duration=first:dropout_transition=2[a]"
@@ -392,7 +386,7 @@ def tab3_render_advanced(
 # =========================================================
 # GRADIO UI
 # =========================================================
-with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title=APP_TITLE) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script, Myanmar Voice-Over & Advanced One Clip Studio**")
 
     with gr.Tabs() as main_tabs:
@@ -505,7 +499,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
-    v3_ratio.change(lambda r: get_ratio_css(r, "tab3_ratio_preview") if False else get_ratio_css(r, "tab3_preview_container"), inputs=v3_ratio, outputs=v3_preview_css)
+    v3_ratio.change(lambda r: get_ratio_css(r, "tab3_preview_container"), inputs=v3_ratio, outputs=v3_preview_css)
     
     v1_gen_btn.click(
         tab1_analyze, 
@@ -519,4 +513,4 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 # Server Port Configuration for Render & Railway
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
