@@ -326,7 +326,9 @@ def render_one_clip(source,voice_audio,srt,ratio,resolution,quality,speed,crop_w
     bg=f"color=c=0x{bg_color.lstrip('#')}:s={w}x{h}[bg]" if not blur_bg else f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=18:8[bg]"
     clean_color=font_color.lstrip('#')
     ass_color='&H00'+clean_color[4:6]+clean_color[2:4]+clean_color[0:2]+'&' if len(clean_color)==6 else '&H00FFFFFF&'
-    subtitle_filter=f"subtitles='{srt.replace('\\','/').replace(':','\\:')}':force_style='FontSize={int(font_size)},PrimaryColour={ass_color},OutlineColour=&H00000000&,Outline=2,Shadow=1,Alignment=2,MarginV={max(10,int(120+float(sub_y)/4))}'"
+    escaped_srt = srt.replace("\\", "/").replace(":", "\\:")
+    margin_v = max(10, int(120 + float(sub_y) / 4))
+    subtitle_filter=f"subtitles='{escaped_srt}':force_style='FontSize={int(font_size)},PrimaryColour={ass_color},OutlineColour=&H00000000&,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}'"
     vf=f"[0:v]split=2[b0][f0];{bg.replace('[0:v]','[b0]')};[f0]{crop},scale=iw*{zoom}:ih*{zoom}:force_original_aspect_ratio=decrease,eq=brightness={brightness-1:.2f}:contrast={contrast:.2f}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[v];[v]{subtitle_filter}[vout]"
     inputs=["ffmpeg","-y","-stream_loop","-1","-i",source,"-i",voice_audio]; amap=[]
     if bgm and os.path.exists(bgm): inputs += ["-stream_loop","-1","-i",bgm]
