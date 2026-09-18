@@ -12,11 +12,10 @@ from google import genai
 # =========================================================
 # CONFIGURATION & SETTINGS
 # =========================================================
-APP_TITLE = "AI Movie Recap Studio Pro"
+APP_TITLE = "AI Movie Recap Studio Pro + One Clip Studio"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -249,6 +248,58 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     return output_name, srt_file, zip_file
 
 # =========================================================
+# TAB 3: ONE CLIP GENERATOR (AUTO CUT, SYNC & RENDER)
+# =========================================================
+async def generate_one_clip_process(video_file, audio_file, resolution_choice, ratio_choice):
+    if not video_file or not os.path.exists(video_file):
+        return None, "⚠️ ဗီဒီယိုဖိုင် မရှိပါ။"
+    if not audio_file or not os.path.exists(audio_file):
+        return None, "⚠️ အသံဖိုင် (TTS MP3) မရှိပါ။"
+
+    output_filename = "final_one_clip_output.mp4"
+    
+    # Resoluton Mapping for FFmpeg scale
+    res_heights = {
+        "480p (Fast Render)": "480",
+        "720p (HD Standard)": "720",
+        "1080p (Full HD)": "1080"
+    }
+    target_h = res_heights.get(resolution_choice, "720")
+
+    # Aspect Ratio Filter Mapping
+    ratio_filters = {
+        "16:9": f"scale=trunc(oh*a/2)*2:{target_h},setsar=1",
+        "9:16": f"scale={target_h}:trunc(ow*a/2)*2,setsar=1",
+        "1:1": f"scale={target_h}:{target_h},setsar=1",
+        "3:4": f"scale=trunc(oh*a/2)*2:{target_h},setsar=1"
+    }
+    vf_filter = ratio_filters.get(ratio_choice, f"scale=-2:{target_h},setsar=1")
+
+    # FFmpeg command to sync video length with audio, remove dead/unmatched frames smoothly, and hardcode settings
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_file,
+        "-i", audio_file,
+        "-filter_complex", f"[0:v]{vf_filter},fps=30[v];[1:a]aformat=sample_rates=44100:channel_layouts=stereo[a]",
+        "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
+        output_filename
+    ]
+
+    try:
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        if process.returncode != 0:
+            return None, f"❌ FFmpeg Error: {process.stderr[-300:]}"
+        if os.path.exists(output_filename):
+            return output_filename, "✅ One Clip အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ။"
+    except Exception as e:
+        return None, f"❌ Error: {str(e)}"
+    
+    return None, "❌ Unknown error occurred during rendering."
+
+# =========================================================
 # TAB CONTROLLERS
 # =========================================================
 def tab1_analyze(v_file, v_url, ratio):
@@ -271,11 +322,15 @@ def tab2_tts(text, voice, speed):
         print("Tab 2 Error:", e)
         return None, None, None, None
 
+def tab3_render(v_file, a_file, res, ratio):
+    mp4_out, status = asyncio.run(generate_one_clip_process(v_file, a_file, res, ratio))
+    return mp4_out, mp4_out, status
+
 # =========================================================
 # GRADIO UI
 # =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Myanmar Voice-Over**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script, Myanmar Voice-Over & One Clip Studio**")
 
     with gr.Tabs() as main_tabs:
         # --- API KEY TAB ---
@@ -317,6 +372,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v2_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 အသံ ရွေးချယ်ပါ")
                     v2_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ Speed (%)")
                     v2_btn = gr.Button("⚡ မြန်မာအသံဖိုင် ဖန်တီးမည်", variant="primary")
+                    go_to_tab3_btn = gr.Button("🎬 Tab 3 (One Clip Studio) သို့ သွားမည် ➡️", variant="secondary")
                 with gr.Column(scale=1):
                     v2_audio = gr.Audio(label="🔊 Voice Preview (အသံစမ်းနားထောင်ရန်)", autoplay=True)
                     v2_mp3 = gr.File(label="🎵 MP3 ဖိုင် ဒေါင်းလုဒ်")
@@ -325,6 +381,30 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v2_zip = gr.File(label="📦 SRT ZIP")
 
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
+
+        # --- TAB 3: ONE CLIP STUDIO ---
+        with gr.TabItem("3️⃣ One Clip Studio (Auto Sync & Cut)", id="tab_clip"):
+            gr.Markdown("### 🎬 ဗီဒီယို၊ အသံနှင့် စာတန်းထိုးများကို အလိုအလျောက် အချိန်ကိုက်ပေါင်းစပ်ပြီးသား Final Clip ထုတ်လုပ်ရန်")
+            with gr.Row():
+                with gr.Column(scale=1):
+                    v3_video_input = gr.Video(label="📹 မူရင်းဗီဒီယိုဖိုင် တင်ရန်")
+                    v3_audio_input = gr.Audio(label="🎵 Tab 2 မှ ထွက်လာသော MP3 အသံဖိုင် တင်ရန်", type="filepath")
+                    
+                    v3_resolution = gr.Radio(["480p (Fast Render)", "720p (HD Standard)", "1080p (Full HD)"], value="720p (HD Standard)", label="🖥️ Video Resolution ရွေးချယ်ပါ")
+                    v3_ratio = gr.Radio(["16:9", "9:16", "1:1", "3:4"], value="16:9", label="📐 Aspect Ratio ပြင်ဆင်ရန်")
+                    
+                    v3_render_btn = gr.Button("🚀 One Clip အပြီးသတ် ဖန်တီးမည်", variant="primary")
+                
+                with gr.Column(scale=1):
+                    v3_status = gr.Markdown("ဖိုင်များထည့်သွင်းပြီး One Clip ဖန်တီးရန် အဆင်သင့်ဖြစ်ပါသည်။")
+                    v3_preview = gr.Video(label="📺 Final Rendered Video Preview")
+                    v3_final_mp4 = gr.File(label="📥 Final MP4 Video ဒေါင်းလုဒ်ဆွဲရန်")
+
+            v3_render_btn.click(
+                tab3_render,
+                inputs=[v3_video_input, v3_audio_input, v3_resolution, v3_ratio],
+                outputs=[v3_preview, v3_final_mp4, v3_status]
+            )
 
     # ================= EVENT BINDINGS =================
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
@@ -338,6 +418,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     )
 
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
+    go_to_tab3_btn.click(lambda: gr.Tabs(selected="tab_clip"), outputs=main_tabs)
 
 # Server Port Configuration for Render & Railway
 if __name__ == "__main__":
