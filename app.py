@@ -67,8 +67,12 @@ AUDIO_TYPES = [
 
 OUTPUT_DIR = Path("outputs")
 TEMP_DIR = Path("temp")
+ANALYSIS_CACHE_DIR = TEMP_DIR / "analysis_cache"
+PROXY_CACHE_DIR = TEMP_DIR / "analysis_proxy"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
+ANALYSIS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+PROXY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.6-flash"
 if DEFAULT_MODEL.startswith("models/"):
@@ -338,10 +342,61 @@ def get_gemini_client(api_key=""):
         return None, f"❌ Gemini client error: {e}"
 
 
-def wait_for_gemini_file(client, uploaded, timeout_seconds=120):
-    """Gemini video files can require server-side processing before use."""
+def _video_fingerprint(video_path):
+    """Fast fingerprint without hashing the whole movie."""
+    p = Path(video_path)
+    st = p.stat()
+    h = hashlib.sha1()
+    h.update(f"{p.name}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8"))
+    with p.open("rb") as f:
+        h.update(f.read(1024 * 1024))
+        if st.st_size > 1024 * 1024:
+            f.seek(max(0, st.st_size - 1024 * 1024))
+            h.update(f.read(1024 * 1024))
+    return h.hexdigest()[:20]
+
+
+def _analysis_cache_path(video_path, language, ratio):
+    key = hashlib.sha1(
+        f"{_video_fingerprint(video_path)}|{language}|{ratio}".encode("utf-8")
+    ).hexdigest()[:24]
+    return ANALYSIS_CACHE_DIR / f"{key}.txt"
+
+
+def _make_fast_analysis_proxy(video_path, duration):
+    """Create a small, low-frame-rate proxy so Gemini processes far less video."""
+    try:
+        fp = _video_fingerprint(video_path)
+    except Exception:
+        fp = uuid.uuid4().hex
+
+    proxy = PROXY_CACHE_DIR / f"{fp}.mp4"
+    if proxy.exists() and proxy.stat().st_size > 10000:
+        return str(proxy), "cached-proxy"
+
+    # 0.5 FPS is enough for recap scene understanding while keeping audio.
+    # Very long videos use 0.25 FPS to reduce Gemini processing even more.
+    fps = 0.25 if duration > 600 else 0.5
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(video_path),
+        "-vf", f"fps={fps},scale=-2:360",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "32",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "48k", "-ac", "1",
+        "-movflags", "+faststart", str(proxy),
+    ]
+    r = run_cmd(cmd, timeout=600)
+    if r.returncode == 0 and proxy.exists() and proxy.stat().st_size > 10000:
+        return str(proxy), f"proxy-{fps}fps"
+    return video_path, "original"
+
+
+def wait_for_gemini_file(client, uploaded, timeout_seconds=240):
+    """Poll Gemini file state quickly; server-side processing is the real bottleneck."""
     file_obj = uploaded
     started = time.time()
+    last_refresh = 0.0
 
     while time.time() - started < timeout_seconds:
         state = getattr(file_obj, "state", None)
@@ -349,20 +404,21 @@ def wait_for_gemini_file(client, uploaded, timeout_seconds=120):
 
         if "ACTIVE" in state_name:
             return file_obj, ""
-
         if "FAILED" in state_name:
             return None, f"❌ Gemini video processing failed: {state_name}"
 
-        try:
-            name = getattr(file_obj, "name", None)
-            if name:
-                file_obj = client.files.get(name=name)
-        except Exception:
-            pass
+        # Refresh only every 0.8s to avoid unnecessary API calls.
+        if time.time() - last_refresh >= 0.8:
+            try:
+                name = getattr(file_obj, "name", None)
+                if name:
+                    file_obj = client.files.get(name=name)
+                last_refresh = time.time()
+            except Exception:
+                pass
+        time.sleep(0.35)
 
-        time.sleep(0.6)
-
-    return None, "❌ Gemini video processing timeout (120 sec)"
+    return None, "❌ Gemini video processing timeout (240 sec)"
 
 
 def upload_and_wait_gemini(client, video_path):
@@ -370,7 +426,6 @@ def upload_and_wait_gemini(client, video_path):
         uploaded = client.files.upload(file=video_path)
     except Exception as e:
         return None, f"❌ Gemini video upload error: {e}"
-
     return wait_for_gemini_file(client, uploaded)
 
 
@@ -383,7 +438,6 @@ def _gemini_output_text(response):
     text = getattr(response, "output_text", "") or ""
     if text:
         return str(text).strip()
-    # Compatibility fallback for SDK responses that expose text differently.
     text = getattr(response, "text", "") or ""
     return str(text).strip()
 
@@ -392,6 +446,16 @@ def run_gemini_video_analysis(video_path, ratio, script_language, api_key):
     ok, err = validate_video(video_path)
     if not ok:
         return "", DEFAULT_MODEL, err
+
+    # Re-running the same video should never make Gemini analyze it again.
+    try:
+        cache_file = _analysis_cache_path(video_path, script_language, ratio)
+        if cache_file.exists() and cache_file.stat().st_size > 20:
+            cached = cache_file.read_text(encoding="utf-8").strip()
+            if cached:
+                return cached, DEFAULT_MODEL, "⚡ Cached script — Gemini မပြန်ခေါ်တော့ပါ"
+    except Exception:
+        cache_file = None
 
     client, client_err = get_gemini_client(api_key)
     if client is None:
@@ -403,48 +467,51 @@ def run_gemini_video_analysis(video_path, ratio, script_language, api_key):
         if duration > 0 else "🎞️ Duration: unknown"
     )
 
-    prompt = f"""
-Write a concise movie-recap narration from the uploaded video.
-Language: {script_language}. Ratio: {ratio}.
-Use ONLY events actually visible or audible. Follow the real order. Include key characters, actions, conflict and important plot changes. Do not invent scenes, dialogue, characters or an ending. Make it natural and TTS-friendly. If Burmese is requested, use natural Myanmar Burmese. Keep useful character names. Return ONLY the finished narration script.
-"""
+    # Short, direct prompt reduces generation latency and output tokens.
+    prompt = f"""Create a concise movie-recap narration from this video.
+Language: {script_language}. Use ONLY visible/audible events in real order.
+Include key characters, actions, conflict and important plot changes.
+Do not invent scenes, dialogue, characters or an ending.
+Make it natural and TTS-friendly. If Burmese, use natural Myanmar Burmese.
+Return ONLY the finished narration script."""
 
-    # Very short/small videos can be sent inline, avoiding the extra File API
-    # processing wait. Larger videos use File API as recommended by Google.
     file_size = 0
     try:
         file_size = os.path.getsize(video_path)
     except Exception:
         pass
 
-    use_inline = file_size > 0 and file_size < 20 * 1024 * 1024 and duration > 0 and duration <= 60
+    # Tiny clips are fastest inline. Longer clips get a tiny analysis proxy:
+    # 360p + 0.5 FPS (0.25 FPS for >10 min) while preserving the audio track.
+    use_inline = file_size > 0 and file_size < 12 * 1024 * 1024 and duration > 0 and duration <= 45
+    analysis_video = video_path
+    proxy_label = "inline"
+
+    if not use_inline and duration > 45:
+        analysis_video, proxy_label = _make_fast_analysis_proxy(video_path, duration)
 
     uploaded = None
     if not use_inline:
-        uploaded, upload_err = upload_and_wait_gemini(client, video_path)
+        uploaded, upload_err = upload_and_wait_gemini(client, analysis_video)
         if uploaded is None:
             return "", DEFAULT_MODEL, upload_err
 
     last_error = None
-
+    # 3.6 is the default fast model; fallback only when needed.
     for model in GEMINI_MODEL_FALLBACKS:
-        # Fast mode: short clips use static processing with 0.5 FPS to reduce
-        # the amount of video Gemini has to inspect. Long videos use agentic
-        # processing so Gemini can navigate only the useful parts.
-        if duration and duration < 300:
-            processing = {"type": "static", "fps": 0.5}
-        else:
-            processing = "agentic"
+        # Static low-FPS processing is much faster for recap-style analysis.
+        processing = {"type": "static", "fps": 0.5 if duration <= 600 else 0.25}
 
         for attempt in range(2):
             try:
                 if use_inline:
+                    mime = "video/mp4"
                     with open(video_path, "rb") as fh:
                         video_b64 = base64.b64encode(fh.read()).decode("utf-8")
                     interaction = client.interactions.create(
                         model=model,
                         input=[
-                            {"type": "video", "data": video_b64, "mime_type": "video/mp4"},
+                            {"type": "video", "data": video_b64, "mime_type": mime},
                             {"type": "text", "text": prompt},
                         ],
                     )
@@ -465,23 +532,26 @@ Use ONLY events actually visible or audible. Follow the real order. Include key 
                 text = _gemini_output_text(interaction)
                 if not text:
                     return "", model, "❌ Gemini က script မပြန်ပေးပါ။"
-                mode_label = "inline" if use_inline else processing
-                return text, model, f"{duration_msg} • {mode_label} • {model}"
+
+                if cache_file is not None:
+                    try:
+                        cache_file.write_text(text, encoding="utf-8")
+                    except Exception:
+                        pass
+
+                return text, model, f"{duration_msg} • ⚡ Fast {proxy_label} • {model}"
 
             except Exception as e:
                 last_error = e
                 if _gemini_is_503(e) and attempt == 0:
-                    # Temporary capacity spikes are commonly recoverable.
-                    time.sleep(2)
+                    time.sleep(1.2)
                     continue
                 break
 
     return "", DEFAULT_MODEL, (
         f"❌ Gemini analysis error: {last_error}\n"
-        "💡 Gemini server busy ဖြစ်နေပါသည်။ App က model fallback/retry လုပ်ပြီးပါပြီ။ "
-        "မိနစ်အနည်းငယ်အကြာ ပြန်စမ်းပါ။"
+        "💡 Gemini server busy ဖြစ်နေပါသည်။ Retry/Fallback ပြီးပါပြီ။"
     )
-
 
 def tab1_analyze(video_file, url, ratio, language, api_key):
     target = normalize_path(video_file)
@@ -537,7 +607,7 @@ def edge_volume(value):
         return "+0%"
 
 
-def _split_tts_text(text, max_chars=420):
+def _split_tts_text(text, max_chars=850):
     text = re.sub(r"\s+", " ", str(text or "").strip())
     if len(text) <= max_chars:
         return [text] if text else []
@@ -568,7 +638,7 @@ def _split_tts_text(text, max_chars=420):
 
 async def _tts_many_async(chunks, voice, rate, volume, work_dir):
     # Small concurrency keeps Edge TTS responsive without creating a huge burst.
-    sem = asyncio.Semaphore(3)
+    sem = asyncio.Semaphore(5)
 
     async def one(i, chunk):
         async with sem:
@@ -1707,8 +1777,8 @@ X/Y က အလိုအလျောက် update ဖြစ်ပြီး Final 
         gr.Markdown("## 🎬 Export")
         t3_quality = gr.Radio(
             ["480p", "720p", "1080p"],
-            value="720p",
-            label="Export Quality",
+            value="480p",
+            label="Export Quality (မြန်မြန်လိုရင် 480p)",
         )
 
         t3_generate = gr.Button(
