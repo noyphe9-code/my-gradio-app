@@ -16,7 +16,7 @@ if hasattr(sys.stderr, "reconfigure"):
 # =========================================================
 # GLOBAL CONFIG & UTILS
 # =========================================================
-APP_TITLE = "AI Movie Recap Studio Pro (Tab 1 & 2)"
+APP_TITLE = "AI Movie Recap Studio Pro (Multi-Language to Myanmar TTS)"
 VOICES = {
     "Thiha (အမျိုးသားအသံ) - Natural": "my-MM-ThihaNeural",
     "Nilar (အမျိုးသမီးအသံ) - Natural": "my-MM-NilarNeural"
@@ -64,11 +64,9 @@ def tab1_analyze(v_file, v_url, ratio):
         client = genai.Client(api_key=api_key)
         print("Uploading video to Gemini with MIME type...")
         
-        # MIME type အတိအကျ သတ်မှတ်ပေးခြင်းဖြင့် Error ကို ဖြေရှင်းသည်
         with open(video_path, "rb") as f:
             video_file = client.files.upload(file=f, config={"mime_type": "video/mp4"})
         
-        # Upload ပြီးဆုံးသည်အထိ စောင့်ဆိုင်းခြင်း
         while video_file.state.name == "PROCESSING":
             time.sleep(3)
             video_file = client.files.get(name=video_file.name)
@@ -84,7 +82,6 @@ def tab1_analyze(v_file, v_url, ratio):
         )
         script_text = response.text
 
-        # SRT စာတန်းထိုးဖိုင်ကို UTF-8 ဖြင့် သိမ်းဆည်းခြင်း
         srt_path = "subtitles.srt"
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write("1\n00:00:01,000 --> 00:00:10,000\n" + script_text[:100].replace('\n', ' ') + "\n")
@@ -93,6 +90,30 @@ def tab1_analyze(v_file, v_url, ratio):
     except Exception as e:
         err_msg = f"❌ Gemini API Error: {str(e)}"
         return err_msg, "", err_msg, None, None
+
+def translate_text_to_myanmar(input_text):
+    if not input_text or not input_text.strip():
+        return "❌ ကျေးဇူးပြု၍ ဘာသာပြန်လိုသော စာသားကို ထည့်ပါ။"
+    
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return "❌ Error: ကျေးဇူးပြု၍ 'API Key Setting' Tab တွင် Gemini API Key အရင်ထည့်ပါ။"
+
+    try:
+        client = genai.Client(api_key=api_key)
+        prompt = (
+            "အောက်ပါစာသားသည် အင်္ဂလိပ်၊ ထိုင်း၊ ကိုရီးယား သို့မဟုတ် တရုတ်ဘာသာစကား ဖြစ်နိုင်ပါသည်။ "
+            "ဤစာသားများကို အသံထွက်ဖတ်ရန် သဘာဝကျပြီး ဆွဲဆောင်မှုရှိသော မြန်မာဘာသာသို့ အပြည့်အစုံ ဘာသာပြန်ပေးပါ။ "
+            "အခြားမှတ်ချက်မပါဘဲ ဘာသာပြန်စာသားကိုသာ တိုက်ရိုက်ထုတ်ပေးပါ။\n\n"
+            f"စာသား: {input_text}"
+        )
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        return response.text
+    except Exception as e:
+        return f"❌ Translation Error: {str(e)}"
 
 async def generate_myanmar_tts(text, voice_name, rate_percent, output_file):
     rate_str = f"+{rate_percent}%" if rate_percent >= 0 else f"{rate_percent}%"
@@ -120,7 +141,7 @@ def tab2_tts(text, voice_key, speed):
 # GRADIO UI & APP LAUNCH
 # =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Myanmar Voice-Over Studio**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script, Multi-Language Translator & Myanmar Voice-Over Studio**")
 
     with gr.Tabs() as main_tabs:
         # --- TAB 0: API KEY ---
@@ -154,24 +175,31 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v1_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
                 v1_zip = gr.File(label="📦 SRT ZIP ဒေါင်းလုဒ်")
 
-        # --- TAB 2: TTS ---
-        with gr.TabItem("2️⃣ Text-to-Speech", id="tab_tts"):
+        # --- TAB 2: TTS & TRANSLATOR ---
+        with gr.TabItem("2️⃣ Multi-Language Translate & TTS", id="tab_tts"):
+            gr.Markdown("### 🌐 အင်္ဂလိပ်၊ ထိုင်း၊ ကိုရီးယား၊ တရုတ် စာသားများကို မြန်မာလို ဘာသာပြန်ပြီး အသံထုတ်နိုင်ပါသည်")
             with gr.Row():
                 with gr.Column(scale=1):
-                    v2_input_text = gr.Textbox(label="🎙️ Burmese Script (Tab 1 မှ အလိုအလျောက် ရောက်ရှိပါမည်)", lines=12)
+                    v2_input_text = gr.Textbox(label="📝 (English, Thai, Korean, Chinese, Myanmar) စာသားထည့်ရန်", lines=10)
+                    translate_btn = gr.Button("🌐 မြန်မာလိုသို့ ဘာသာပြန်မည်", variant="secondary")
+                    
                     v2_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 အသံ ရွေးချယ်ပါ")
                     v2_speed = gr.Slider(-30, 50, value=0, step=1, label="⚡ Speed (%)")
                     v2_btn = gr.Button("⚡ မြန်မာအသံဖိုင် ဖန်တီးမည်", variant="primary")
+                
                 with gr.Column(scale=1):
                     v2_audio = gr.Audio(label="🔊 Voice Preview (အသံစမ်းနားထောင်ရန်)")
                     v2_mp3 = gr.File(label="🎵 MP3 ဖိုင် ဒေါင်းလုဒ်")
+            
             with gr.Row():
                 v2_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
                 v2_zip = gr.File(label="📦 SRT ZIP ဖိုင်")
 
+            # Event Bindings for Tab 2
+            translate_btn.click(translate_text_to_myanmar, inputs=v2_input_text, outputs=v2_input_text)
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
-    # ================= EVENT BINDINGS =================
+    # ================= EVENT BINDINGS (TAB 1) =================
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
