@@ -35,6 +35,8 @@ import subprocess
 import asyncio
 import html
 import time
+import hashlib
+import base64
 from pathlib import Path
 from urllib.parse import quote
 
@@ -68,7 +70,19 @@ TEMP_DIR = Path("temp")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.6-flash"
+if DEFAULT_MODEL.startswith("models/"):
+    DEFAULT_MODEL = DEFAULT_MODEL.split("/", 1)[1]
+if DEFAULT_MODEL in {"gemini-2.5-flash", "gemini-2.5-flash-lite"}:
+    DEFAULT_MODEL = "gemini-3.6-flash"
+
+# Current fast video-capable models. If a model returns 503, the app
+# automatically retries and falls back to the next model.
+GEMINI_MODEL_FALLBACKS = []
+for _m in [DEFAULT_MODEL, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"]:
+    if _m and _m not in GEMINI_MODEL_FALLBACKS:
+        GEMINI_MODEL_FALLBACKS.append(_m)
+
 ENV_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 RATIO_DIMS = {
@@ -324,7 +338,7 @@ def get_gemini_client(api_key=""):
         return None, f"❌ Gemini client error: {e}"
 
 
-def wait_for_gemini_file(client, uploaded, timeout_seconds=180):
+def wait_for_gemini_file(client, uploaded, timeout_seconds=120):
     """Gemini video files can require server-side processing before use."""
     file_obj = uploaded
     started = time.time()
@@ -346,9 +360,9 @@ def wait_for_gemini_file(client, uploaded, timeout_seconds=180):
         except Exception:
             pass
 
-        time.sleep(2)
+        time.sleep(0.6)
 
-    return None, "❌ Gemini video processing timeout (180 sec)"
+    return None, "❌ Gemini video processing timeout (120 sec)"
 
 
 def upload_and_wait_gemini(client, video_path):
@@ -358,6 +372,20 @@ def upload_and_wait_gemini(client, video_path):
         return None, f"❌ Gemini video upload error: {e}"
 
     return wait_for_gemini_file(client, uploaded)
+
+
+def _gemini_is_503(exc):
+    text = str(exc).upper()
+    return "503" in text or "UNAVAILABLE" in text or "HIGH DEMAND" in text
+
+
+def _gemini_output_text(response):
+    text = getattr(response, "output_text", "") or ""
+    if text:
+        return str(text).strip()
+    # Compatibility fallback for SDK responses that expose text differently.
+    text = getattr(response, "text", "") or ""
+    return str(text).strip()
 
 
 def run_gemini_video_analysis(video_path, ratio, script_language, api_key):
@@ -375,40 +403,84 @@ def run_gemini_video_analysis(video_path, ratio, script_language, api_key):
         if duration > 0 else "🎞️ Duration: unknown"
     )
 
-    uploaded, upload_err = upload_and_wait_gemini(client, video_path)
-    if uploaded is None:
-        return "", DEFAULT_MODEL, upload_err
-
     prompt = f"""
-You are an expert movie recap writer.
-Analyze the uploaded video carefully and write a narration script based ONLY on events actually visible/audible in the video.
-
-Output ratio: {ratio}
-Requested narration language: {script_language}
-
-Rules:
-1. Follow the real sequence of events.
-2. Include important characters, actions, conflicts and plot developments.
-3. Do not invent scenes, dialogue, characters or an ending that is not present.
-4. Make the narration understandable to someone who has not watched the video.
-5. Use natural text-to-speech friendly sentences.
-6. Avoid stage directions and excessive headings.
-7. If Burmese is requested, use natural Myanmar Burmese.
-8. Keep important character names where useful.
-9. Return ONLY the finished narration script.
+Write a concise movie-recap narration from the uploaded video.
+Language: {script_language}. Ratio: {ratio}.
+Use ONLY events actually visible or audible. Follow the real order. Include key characters, actions, conflict and important plot changes. Do not invent scenes, dialogue, characters or an ending. Make it natural and TTS-friendly. If Burmese is requested, use natural Myanmar Burmese. Keep useful character names. Return ONLY the finished narration script.
 """
 
+    # Very short/small videos can be sent inline, avoiding the extra File API
+    # processing wait. Larger videos use File API as recommended by Google.
+    file_size = 0
     try:
-        response = client.models.generate_content(
-            model=DEFAULT_MODEL,
-            contents=[uploaded, prompt],
-        )
-        text = getattr(response, "text", "") or ""
-        if not text.strip():
-            return "", DEFAULT_MODEL, "❌ Gemini က script မပြန်ပေးပါ။"
-        return text.strip(), DEFAULT_MODEL, duration_msg
-    except Exception as e:
-        return "", DEFAULT_MODEL, f"❌ Gemini analysis error: {e}"
+        file_size = os.path.getsize(video_path)
+    except Exception:
+        pass
+
+    use_inline = file_size > 0 and file_size < 20 * 1024 * 1024 and duration > 0 and duration <= 60
+
+    uploaded = None
+    if not use_inline:
+        uploaded, upload_err = upload_and_wait_gemini(client, video_path)
+        if uploaded is None:
+            return "", DEFAULT_MODEL, upload_err
+
+    last_error = None
+
+    for model in GEMINI_MODEL_FALLBACKS:
+        # Fast mode: short clips use static processing with 0.5 FPS to reduce
+        # the amount of video Gemini has to inspect. Long videos use agentic
+        # processing so Gemini can navigate only the useful parts.
+        if duration and duration < 300:
+            processing = {"type": "static", "fps": 0.5}
+        else:
+            processing = "agentic"
+
+        for attempt in range(2):
+            try:
+                if use_inline:
+                    with open(video_path, "rb") as fh:
+                        video_b64 = base64.b64encode(fh.read()).decode("utf-8")
+                    interaction = client.interactions.create(
+                        model=model,
+                        input=[
+                            {"type": "video", "data": video_b64, "mime_type": "video/mp4"},
+                            {"type": "text", "text": prompt},
+                        ],
+                    )
+                else:
+                    interaction = client.interactions.create(
+                        model=model,
+                        input=[
+                            {
+                                "type": "video",
+                                "uri": uploaded.uri,
+                                "mime_type": uploaded.mime_type or "video/mp4",
+                                "processing": processing,
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    )
+
+                text = _gemini_output_text(interaction)
+                if not text:
+                    return "", model, "❌ Gemini က script မပြန်ပေးပါ။"
+                mode_label = "inline" if use_inline else processing
+                return text, model, f"{duration_msg} • {mode_label} • {model}"
+
+            except Exception as e:
+                last_error = e
+                if _gemini_is_503(e) and attempt == 0:
+                    # Temporary capacity spikes are commonly recoverable.
+                    time.sleep(2)
+                    continue
+                break
+
+    return "", DEFAULT_MODEL, (
+        f"❌ Gemini analysis error: {last_error}\n"
+        "💡 Gemini server busy ဖြစ်နေပါသည်။ App က model fallback/retry လုပ်ပြီးပါပြီ။ "
+        "မိနစ်အနည်းငယ်အကြာ ပြန်စမ်းပါ။"
+    )
 
 
 def tab1_analyze(video_file, url, ratio, language, api_key):
@@ -465,37 +537,109 @@ def edge_volume(value):
         return "+0%"
 
 
+def _split_tts_text(text, max_chars=420):
+    text = re.sub(r"\s+", " ", str(text or "").strip())
+    if len(text) <= max_chars:
+        return [text] if text else []
+
+    sentences = re.split(r"(?<=[.!?။！？])\s+", text)
+    chunks, current = [], ""
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if len(sentence) > max_chars:
+            # Hard split only very long individual sentences.
+            for i in range(0, len(sentence), max_chars):
+                part = sentence[i:i + max_chars].strip()
+                if part:
+                    chunks.append(part)
+            continue
+        candidate = (current + " " + sentence).strip()
+        if current and len(candidate) > max_chars:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def _tts_many_async(chunks, voice, rate, volume, work_dir):
+    # Small concurrency keeps Edge TTS responsive without creating a huge burst.
+    sem = asyncio.Semaphore(3)
+
+    async def one(i, chunk):
+        async with sem:
+            path = work_dir / f"part_{i:04d}.mp3"
+            await _tts_async(chunk, voice, str(path), rate, volume)
+            return str(path)
+
+    return await asyncio.gather(*(one(i, c) for i, c in enumerate(chunks)))
+
+
+def _concat_mp3(parts, output_path):
+    if len(parts) == 1:
+        shutil.copyfile(parts[0], output_path)
+        return True
+    list_file = Path(output_path).with_suffix(".txt")
+    try:
+        with open(list_file, "w", encoding="utf-8") as f:
+            for part in parts:
+                f.write("file '" + str(Path(part).resolve()).replace("'", "'\\''") + "'\n")
+        r = run_cmd([
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "concat", "-safe", "0", "-i", str(list_file),
+            "-c", "copy", str(output_path),
+        ], timeout=180)
+        return r.returncode == 0 and os.path.exists(output_path)
+    finally:
+        try:
+            list_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def make_tts(text, voice_name, rate, volume):
-    if not text or not str(text).strip():
+    text = str(text or "").strip()
+    if not text:
         return None, "❌ TTS text မရှိပါ။"
 
     voice = VOICE_MAP.get(voice_name)
     if not voice:
         return None, f"❌ Voice မတွေ့ပါ: {voice_name}"
 
-    out = OUTPUT_DIR / f"tts_{uuid.uuid4().hex[:8]}.mp3"
+    # Same text/settings -> return cached audio immediately.
+    cache_key = hashlib.sha256(
+        f"{text}\n{voice}\n{rate}\n{volume}".encode("utf-8")
+    ).hexdigest()[:24]
+    out = OUTPUT_DIR / f"tts_{cache_key}.mp3"
+    if out.exists() and out.stat().st_size > 1000:
+        return str(out), f"⚡ Cached TTS — {voice_name}"
+
+    chunks = _split_tts_text(text)
+    work_dir = TEMP_DIR / f"tts_{uuid.uuid4().hex[:10]}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    async def run_all():
+        return await _tts_many_async(
+            chunks, voice, edge_rate(rate), edge_volume(volume), work_dir
+        )
+
     try:
-        asyncio.run(_tts_async(
-            str(text).strip(),
-            voice,
-            str(out),
-            edge_rate(rate),
-            edge_volume(volume),
-        ))
-        return str(out), f"✅ TTS ပြီးပါပြီ — {voice_name}"
-    except RuntimeError as e:
-        # Fallback for environments that already have an event loop.
-        try:
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(_tts_async(
-                str(text).strip(), voice, str(out),
-                edge_rate(rate), edge_volume(volume)
-            ))
-            loop.close()
-            return str(out), f"✅ TTS ပြီးပါပြီ — {voice_name}"
-        except Exception:
-            return None, f"❌ TTS Error: {e}"
+        parts = asyncio.run(run_all())
+        if not _concat_mp3(parts, str(out)):
+            raise RuntimeError("FFmpeg audio concat failed")
+        for part in parts:
+            try:
+                Path(part).unlink(missing_ok=True)
+            except Exception:
+                pass
+        shutil.rmtree(work_dir, ignore_errors=True)
+        return str(out), f"⚡ Fast TTS ပြီးပါပြီ — {voice_name} ({len(chunks)} parts)"
     except Exception as e:
+        shutil.rmtree(work_dir, ignore_errors=True)
         return None, f"❌ TTS Error: {e}"
 
 
@@ -662,7 +806,8 @@ def cover_preview_html(video_path, ratio, cover_type, color, opacity,
                        blur, x, y, width, height, enabled,
                        crop_percent=100, zoom=1.0, video_x=0, video_y=0,
                        brightness=0, contrast=1.0, fill_mode="Blur (ဝေဝါးဖြည့်)",
-                       fill_color="#000000"):
+                       fill_color="#000000", subtitle_text="", subtitle_color="#FFFFFF",
+                       subtitle_size=28, subtitle_position="Lower"):
     video_path = normalize_path(video_path)
     if not video_path or not os.path.exists(video_path):
         return """
@@ -717,12 +862,32 @@ def cover_preview_html(video_path, ratio, cover_type, color, opacity,
     total_scale = max(1.0, crop_scale * zoom)
     bright_css = max(0.0, 1.0 + brightness)
 
+    # Live AI subtitle preview: selected color/size/position appears immediately.
+    preview_source = str(subtitle_text or "").strip() or "စာတန်းထိုး Preview"
+    preview_text = wrap_two_lines(preview_source, max_chars=34)
+    preview_text = html.escape(preview_text).replace("\n", "<br>")
+    sub_color = "#" + clean_hex(subtitle_color, "FFFFFF")
+    sub_size = int(clamp(subtitle_size, 12, 80))
+    sub_pos = str(subtitle_position or "Lower")
+    sub_pos_css = {
+        "Lower": "bottom:7%;left:5%;right:5%;",
+        "Upper": "top:7%;left:5%;right:5%;",
+        "Center": "top:50%;left:5%;right:5%;transform:translateY(-50%);",
+    }.get(sub_pos, "bottom:7%;left:5%;right:5%;")
+    subtitle_html = ""
+    if preview_text:
+        subtitle_html = (
+            '<div class="ai-subtitle-preview" style="' + sub_pos_css +
+            f'color:{sub_color};font-size:{sub_size}px;">{preview_text}</div>'
+        )
+
     return f"""
     <div class="cover-editor" id="cover-editor-inner" style="aspect-ratio:{ratio_css};{bg_style}">
       <video id="cover-editor-video" src="{src}" controls playsinline preload="metadata" style="transform:translate({video_x:.1f}px,{video_y:.1f}px) scale({total_scale:.4f});filter:brightness({bright_css:.3f}) contrast({contrast:.3f});"></video>
       <div id="cover-box" class="cover-box" style="left:{x:.3f}%;top:{y:.3f}%;width:{w:.3f}%;height:{h:.3f}%;{cover_style}{disabled_style}">
         <span>↕↔ ဆွဲရွှေ့ပါ</span>
       </div>
+      {subtitle_html}
       <div class="cover-label">Original Video Subtitle Blur / Cover · {ratio}</div>
     </div>
     """
@@ -1142,12 +1307,14 @@ def tab3_preview(
     brightness, contrast,
     cover_enable, cover_type, cover_color, cover_opacity,
     cover_blur, cover_x, cover_y, cover_width, cover_height,
+    subtitle_text="", subtitle_color="#FFFFFF", subtitle_size=28, subtitle_position="Lower",
 ):
     path = normalize_path(video_path)
     return cover_preview_html(
         path, ratio, cover_type, cover_color, cover_opacity,
         cover_blur, cover_x, cover_y, cover_width, cover_height,
-        cover_enable, crop, zoom, x, y, brightness, contrast, fill_mode, fill_color
+        cover_enable, crop, zoom, x, y, brightness, contrast, fill_mode, fill_color,
+        subtitle_text, subtitle_color, subtitle_size, subtitle_position
     )
 
 
@@ -1262,6 +1429,11 @@ video { border-radius: 12px !important; }
 }
 .cover-box span { background:rgba(0,0,0,.45); padding:3px 7px; border-radius:7px; }
 .cover-box.dragging { border-style:dashed; }
+.ai-subtitle-preview {
+  position:absolute; z-index:12; text-align:center; font-weight:800;
+  line-height:1.18; text-shadow:2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+  pointer-events:none; word-break:break-word; padding:4px 8px;
+}
 .cover-label {
   position:absolute; z-index:20; left:8px; top:8px; color:#fff;
   background:rgba(0,0,0,.55); padding:5px 9px; border-radius:8px; font-size:12px;
@@ -1517,7 +1689,7 @@ X/Y က အလိုအလျောက် update ဖြစ်ပြီး Final 
         gr.Markdown("## 📝 Auto Subtitle")
         with gr.Row():
             t3_subtitle_enable = gr.Checkbox(True, label="AI Voice Script ကို Subtitle အဖြစ်ထည့်မည်")
-            t3_subtitle_color = gr.ColorPicker(value="#FFFFFF", label="Subtitle Color")
+            t3_subtitle_color = gr.ColorPicker(value="#FFFFFF", label="🎨 Subtitle Color (Preview တန်းပြောင်းမည်)")
             t3_subtitle_size = gr.Slider(12, 80, value=28, step=1, label="Subtitle Size")
             t3_subtitle_position = gr.Dropdown(
                 ["Lower", "Upper", "Center"],
@@ -1590,6 +1762,7 @@ X/Y က အလိုအလျောက် update ဖြစ်ပြီး Final 
             t3_brightness, t3_contrast,
             t3_cover_enable, t3_cover_type, t3_cover_color, t3_cover_opacity,
             t3_cover_blur, t3_cover_x, t3_cover_y, t3_cover_width, t3_cover_height,
+            t3_script, t3_subtitle_color, t3_subtitle_size, t3_subtitle_position,
         ]
 
         # Upload/URL changes update both native preview and drag-cover preview.
@@ -1608,6 +1781,7 @@ X/Y က အလိုအလျောက် update ဖြစ်ပြီး Final 
             t3_brightness, t3_contrast, t3_cover_enable, t3_cover_type,
             t3_cover_color, t3_cover_opacity, t3_cover_blur, t3_cover_x,
             t3_cover_y, t3_cover_width, t3_cover_height,
+            t3_script, t3_subtitle_color, t3_subtitle_size, t3_subtitle_position,
         ]:
             component.change(
                 tab3_preview, inputs=preview_inputs, outputs=t3_cover_preview,
