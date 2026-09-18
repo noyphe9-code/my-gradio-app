@@ -62,11 +62,11 @@ def tab1_analyze(v_file, v_url, ratio):
 
     try:
         client = genai.Client(api_key=api_key)
-        print("Uploading video to Gemini...")
+        print("Uploading video to Gemini with MIME type...")
         
-        # Binary mode ဖြင့် ဖိုင်ကိုဖွင့်၍ Upload တင်ခြင်း (Unicode Error ကင်းစေရန်)
+        # MIME type အတိအကျ သတ်မှတ်ပေးခြင်းဖြင့် Error ကို ဖြေရှင်းသည်
         with open(video_path, "rb") as f:
-            video_file = client.files.upload(file=f)
+            video_file = client.files.upload(file=f, config={"mime_type": "video/mp4"})
         
         # Upload ပြီးဆုံးသည်အထိ စောင့်ဆိုင်းခြင်း
         while video_file.state.name == "PROCESSING":
