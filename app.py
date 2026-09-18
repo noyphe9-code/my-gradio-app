@@ -36,6 +36,7 @@ import asyncio
 import html
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import gradio as gr
 import edge_tts
@@ -67,7 +68,7 @@ TEMP_DIR = Path("temp")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 ENV_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 RATIO_DIMS = {
@@ -697,7 +698,10 @@ def cover_preview_html(video_path, ratio, cover_type, color, opacity,
         cover_style = f"background:#{color};opacity:{op:.3f};"
 
     disabled_style = "opacity:0;pointer-events:none;" if not enabled else ""
-    src = "/file=" + html.escape(video_path, quote=True)
+    # Gradio 6.x serves local files from the /gradio_api/file= endpoint.
+    # Use the real VIDEO file as the preview source so the cover is rendered
+    # ON TOP OF THE VIDEO itself, not as a separate cover image.
+    src = "/gradio_api/file=" + quote(video_path, safe="/")
     crop_percent = clamp(crop_percent, 30, 100)
     zoom = clamp(zoom, 0.5, 2.5)
     video_x = clamp(video_x, -300, 300)
@@ -719,7 +723,7 @@ def cover_preview_html(video_path, ratio, cover_type, color, opacity,
       <div id="cover-box" class="cover-box" style="left:{x:.3f}%;top:{y:.3f}%;width:{w:.3f}%;height:{h:.3f}%;{cover_style}{disabled_style}">
         <span>↕↔ ဆွဲရွှေ့ပါ</span>
       </div>
-      <div class="cover-label">Original Subtitle Cover · {ratio}</div>
+      <div class="cover-label">Original Video Subtitle Blur / Cover · {ratio}</div>
     </div>
     """
 
