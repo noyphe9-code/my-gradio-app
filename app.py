@@ -12,7 +12,7 @@ from google import genai
 # =========================================================
 # CONFIGURATION & SETTINGS
 # =========================================================
-APP_TITLE = "AI Movie Recap Studio Pro + Advanced One Clip Studio"
+APP_TITLE = "AI Movie Recap Studio Pro + Advanced Live Preview One Clip Studio"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
@@ -34,7 +34,7 @@ def save_api_key(api_key):
     global SAVED_API_KEY
     if api_key and api_key.strip():
         SAVED_API_KEY = api_key.strip()
-        return "✅ Gemini API Key ကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။"
+        return "✅ Gemini API Key ကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ。"
     return "⚠️ Gemini API Key ထည့်ပေးပါ။"
 
 def get_video_duration(video_path):
@@ -131,6 +131,94 @@ def download_video_from_link(link):
     except Exception as e:
         print("Download Error:", e)
     return None
+
+# =========================================================
+# LIVE PREVIEW CSS & HTML GENERATOR (TAB 3)
+# =========================================================
+def update_live_preview(
+    ratio, sub_text, font_color, stroke_color, font_size,
+    sub_blur_bg, pos_x, pos_y, logo_file, logo_pos, logo_size
+):
+    configs = {
+        "16:9": {"aspect": "16 / 9", "max_w": "640px"},
+        "9:16": {"aspect": "9 / 16", "max_w": "300px"},
+        "1:1": {"aspect": "1 / 1", "max_w": "400px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "340px"},
+    }
+    cfg = configs.get(ratio, configs["16:9"])
+
+    # Logo Position CSS
+    logo_css_rules = "display: none;"
+    if logo_file:
+        # logo_file might be a file path or uploaded object
+        logo_path = logo_file if isinstance(logo_file, str) else getattr(logo_file, "name", "")
+        if logo_path and os.path.exists(logo_path):
+            if "Top-Left" in logo_pos or "ဘယ်ဘက်" in logo_pos:
+                l_pos = "top: 15px; left: 15px;"
+            elif "Top-Right" in logo_pos:
+                l_pos = "top: 15px; right: 15px;"
+            elif "Bottom-Left" in logo_pos:
+                l_pos = "bottom: 60px; left: 15px;"
+            else:
+                l_pos = "bottom: 60px; right: 15px;"
+            logo_css_rules = f"position: absolute; {l_pos} width: {logo_size}px; height: auto; z-index: 10; border-radius: 4px;"
+
+    # Subtitle Styling & Positioning
+    sub_bg_style = ""
+    if sub_blur_bg:
+        sub_bg_style = "background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); padding: 6px 12px; border-radius: 6px;"
+    else:
+        sub_bg_style = "background: rgba(0, 0, 0, 0.2); padding: 4px 8px;"
+
+    stroke_style = f"-webkit-text-stroke: 1px {stroke_color}; text-shadow: 2px 2px 2px {stroke_color};" if stroke_color else ""
+
+    preview_html = f"""
+    <style>
+        .live-preview-wrapper {{
+            width: 100%;
+            max-width: {cfg["max_w"]};
+            margin: 0 auto;
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            aspect-ratio: {cfg["aspect"]};
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        }}
+        .live-preview-video {{
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }}
+        .live-preview-logo {{
+            {logo_css_rules}
+        }}
+        .live-preview-subtitle {{
+            position: absolute;
+            bottom: {max(15, 30 + pos_y)}px;
+            left: calc(50% + {pos_x}px);
+            transform: translateX(-50%);
+            color: {font_color};
+            font-size: {font_size}px;
+            font-weight: bold;
+            text-align: center;
+            width: 90%;
+            z-index: 15;
+            {stroke_style}
+            {sub_bg_style}
+            pointer-events: none;
+            word-break: break-word;
+        }}
+    </style>
+    <div class="live-preview-wrapper" id="live_preview_box">
+        <div class="live-preview-logo"><img src="{logo_path if logo_file else ''}" style="width:100%; height:auto;" /></div>
+        <div class="live-preview-subtitle">{sub_text if sub_text else "စာတန်းထိုး နမူနာပြသရန် ဤနေရာတွင် စာသားထည့်ပါ..."}</div>
+    </div>
+    """
+    return preview_html
 
 def get_ratio_css(ratio, container_id="tab1_preview_container"):
     configs = {
@@ -232,7 +320,7 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     return output_name, srt_file, zip_file
 
 # =========================================================
-# ADVANCED TAB 3: ONE CLIP STUDIO RENDERER (FAST & FULL)
+# OPTIMIZED & FAST ADVANCED ONE CLIP STUDIO RENDERER
 # =========================================================
 def generate_advanced_one_clip(
     video_file, audio_file, resolution, ratio,
@@ -248,8 +336,6 @@ def generate_advanced_one_clip(
         return None, "⚠️ အသံဖိုင် (TTS MP3) မရှိပါ။"
 
     output_filename = "final_advanced_clip.mp4"
-    res_map = {"480p": "480", "720p": "720", "1080p": "1080"}
-    target_h = res_map.get(resolution, "720")
     
     if ratio == "9:16":
         base_w, base_h = "720", "1280"
@@ -261,6 +347,7 @@ def generate_advanced_one_clip(
         base_w, base_h = "1280", "720"
 
     eq_filter = f"eq=brightness={brightness}:contrast={contrast_val}"
+    # Optimized Fast Video Filter Chain
     video_filter = f"[0:v]{eq_filter},scale={base_w}:{base_h}:force_original_aspect_ratio=decrease,pad={base_w}:{base_h}:(ow-iw)/2:(oh-ih)/2,fps=30[v_base]"
 
     current_v = "v_base"
@@ -268,19 +355,18 @@ def generate_advanced_one_clip(
 
     has_logo = bool(logo_file and os.path.exists(logo_file))
     if has_logo:
-        if "Top-Left" in logo_pos or "ဘယ်ဘက်" in logo_pos and "ထိပ်" in logo_pos:
-            logo_x, logo_y = "10", "10"
-        elif "Top-Right" in logo_pos or "ညာဘက်" in logo_pos and "ထိပ်" in logo_pos:
-            logo_x, logo_y = f"W-w-10", "10"
-        elif "Bottom-Left" in logo_pos or "ဘယ်ဘက်" in logo_pos and "အောက်" in logo_pos:
-            logo_x, logo_y = "10", f"H-h-10"
+        if "Top-Left" in logo_pos or "ဘယ်ဘက်" in logo_pos:
+            logo_x, logo_y = "15", "15"
+        elif "Top-Right" in logo_pos:
+            logo_x, logo_y = f"W-w-15", "15"
+        elif "Bottom-Left" in logo_pos:
+            logo_x, logo_y = "15", f"H-h-60"
         else:
-            logo_x, logo_y = f"W-w-10", f"H-h-10"
+            logo_x, logo_y = f"W-w-15", f"H-h-60"
 
         filter_chains.append(f"[1:v]scale={logo_size}:-1[logo];[{current_v}][logo]overlay={logo_x}:{logo_y}[v_logo]")
         current_v = "v_logo"
         audio_input_idx = 2
-        logo_input_idx = 1
     else:
         audio_input_idx = 1
 
@@ -289,10 +375,10 @@ def generate_advanced_one_clip(
         sc = stroke_color.replace("#", "0x") if stroke_color else "0x000000"
         
         x_expr = f"(w-text_w)/2+({sub_pos_x})"
-        y_expr = f"h-text_h-{max(50, 100 + sub_pos_y)}"
+        y_expr = f"h-text_h-{max(20, 40 + sub_pos_y)}"
 
         if sub_blur_bg:
-            filter_chains.append(f"[{current_v}]drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:box=1:boxcolor=black@0.5:boxborderw=10:x={x_expr}:y={y_expr}[v_sub]")
+            filter_chains.append(f"[{current_v}]drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:box=1:boxcolor=black@0.6:boxborderw=8:x={x_expr}:y={y_expr}[v_sub]")
         else:
             filter_chains.append(f"[{current_v}]drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:x={x_expr}:y={y_expr}[v_sub]")
         current_v = "v_sub"
@@ -320,11 +406,12 @@ def generate_advanced_one_clip(
     if has_bgm:
         cmd.extend(["-i", bgm_file])
 
+    # Optimized Speed with preset veryfast & CRF 24
     cmd.extend([
         "-filter_complex", final_filter_complex,
         "-map", f"[{current_v}]", "-map", "[a]",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+        "-c:a", "aac", "-b:a", "128k",
         "-shortest",
         output_filename
     ])
@@ -335,7 +422,7 @@ def generate_advanced_one_clip(
             err_msg = process.stderr[-300:] if process.stderr else "Unknown FFmpeg error"
             return None, f"❌ FFmpeg Error: {err_msg}"
         if os.path.exists(output_filename):
-            return output_filename, "✅ Advanced One Clip အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ။"
+            return output_filename, "✅ Advanced One Clip အမြန်ဆုံးနှင့် အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ။"
     except Exception as e:
         return None, f"❌ Error: {str(e)}"
     
@@ -387,7 +474,7 @@ def tab3_render_advanced(
 # GRADIO UI
 # =========================================================
 with gr.Blocks(title=APP_TITLE) as demo:
-    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script, Myanmar Voice-Over & Advanced One Clip Studio**")
+    gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Studio Pro + Live Preview & Optimized Fast Rendering**")
 
     with gr.Tabs() as main_tabs:
         # --- API KEY TAB ---
@@ -439,9 +526,9 @@ with gr.Blocks(title=APP_TITLE) as demo:
 
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
-        # --- TAB 3: ADVANCED ONE CLIP STUDIO ---
+        # --- TAB 3: ADVANCED ONE CLIP STUDIO WITH LIVE PREVIEW ---
         with gr.TabItem("3️⃣ Advanced One Clip Studio", id="tab_clip"):
-            gr.Markdown("### 🎛️ အဆင့်မြင့် ဗီဒီယို၊ အသံ၊ စာတန်းထိုးနှင့် အလှဖန်တီးမှုများ ပေါင်းစပ်ထုတ်လုပ်ရန်")
+            gr.Markdown("### 🎛️ Live Preview ဖြင့် တိုက်ရိုက်ချိန်ညှိကာ အမြန်ဆုံး Render လုပ်ရန်")
             with gr.Row():
                 with gr.Column(scale=1):
                     v3_video_input = gr.Video(label="📹 မူရင်းဗီဒီယိုဖိုင် တင်ရန်")
@@ -461,10 +548,10 @@ with gr.Blocks(title=APP_TITLE) as demo:
                         v3_bgm_vol = gr.Slider(0.0, 1.0, value=0.15, step=0.05, label="🎵 BGM အသံ အတိုးအလျော့")
 
                     with gr.Accordion("💬 စာတန်းထိုး ဒီဇိုင်းနှင့် နေရာရွှေ့ခြင်း (Subtitles, Blur & Position)", open=True):
-                        v3_sub_text = gr.Textbox(label="📝 စာတန်းထိုးစာသား", lines=4, placeholder="ဗီဒီယိုပေါ်တွင် ဖော်ပြမည့် စာတန်းထိုးများကို ဤနေရာတွင် ထည့်ပါ...")
+                        v3_sub_text = gr.Textbox(label="📝 စာတန်းထိုးစာသား", lines=3, value="ဤနေရာတွင် စာတန်းထိုးပေါ်လာပါမည်...", placeholder="စာတန်းထိုးထည့်ပါ...")
                         v3_font_color = gr.ColorPicker(value="#FFFF00", label="🎨 စာလုံးအရောင် ရွေးချယ်ရန်")
                         v3_stroke_color = gr.ColorPicker(value="#000000", label="🖍️ စာလုံးအနားသတ် အရောင်")
-                        v3_font_size = gr.Slider(16, 72, value=32, step=2, label="🔤 စာလုံးအရွယ်အစား (Font Size)")
+                        v3_font_size = gr.Slider(16, 72, value=28, step=2, label="🔤 စာလုံးအရွယ်အစား (Font Size)")
                         v3_sub_blur = gr.Checkbox(label="🌫️ စာတန်းထိုး နောက်ခံ Blur (ဝေဝါးမှု) ထည့်မည်", value=True)
                         v3_pos_x = gr.Slider(-200, 200, value=0, step=10, label="↔️ ဘယ်/ညာ ရွှေ့ရန် (Position X)")
                         v3_pos_y = gr.Slider(-400, 400, value=0, step=10, label="↕️ အပေါ်/အောက် ရွှေ့ရန် (Position Y)")
@@ -472,15 +559,28 @@ with gr.Blocks(title=APP_TITLE) as demo:
                     with gr.Accordion("🏷️ Logo Watermark ထည့်သွင်းရန်", open=False):
                         v3_logo_file = gr.Image(label="🖼️ Logo ပုံတင်ရန်", type="filepath")
                         v3_logo_pos = gr.Dropdown(["ထိပ်ဆုံး ဘယ်ဘက် (Top-Left)", "ထိပ်ဆုံး ညာဘက် (Top-Right)", "အောက်ဆုံး ဘယ်ဘက် (Bottom-Left)", "အောက်ဆုံး ညာဘက် (Bottom-Right)"], value="ထိပ်ဆုံး ညာဘက် (Top-Right)", label="📍 Logo တည်နေရာ")
-                        v3_logo_size = gr.Slider(50, 300, value=120, step=10, label="📐 Logo အရွယ်အစား (Size)")
+                        v3_logo_size = gr.Slider(40, 250, value=100, step=10, label="📐 Logo အရွယ်အစား (Size)")
 
-                    v3_render_btn = gr.Button("🚀 Advanced One Clip အပြီးသတ် ဖန်တီးမည်", variant="primary")
+                    v3_render_btn = gr.Button("🚀 Advanced One Clip အမြန်ဆုံး ဖန်တီးမည်", variant="primary")
                 
                 with gr.Column(scale=1):
-                    v3_status = gr.Markdown("ဖိုင်များနှင့် ပြင်ဆင်ချက်များ ထည့်သွင်းပြီး One Clip ဖန်တီးရန် အဆင်သင့်ဖြစ်ပါသည်။")
-                    v3_preview_css = gr.HTML(get_ratio_css("16:9", "tab3_preview_container"))
-                    v3_preview = gr.Video(label="📺 Final Rendered Video Preview", elem_id="tab3_preview_container")
+                    v3_status = gr.Markdown("Live Preview တွင် အပြောင်းအလဲများကို တိုက်ရိုက်ကြည့်ရှုနိုင်ပါသည်။")
+                    
+                    gr.Markdown("### 📺 Live Visual Preview (Blur, Logo & Subtitle)")
+                    live_preview_box = gr.HTML(
+                        update_live_preview("16:9", "ဤနေရာတွင် စာတန်းထိုးပေါ်လာပါမည်...", "#FFFF00", "#000000", 28, True, 0, 0, None, "ထိပ်ဆုံး ညာဘက် (Top-Right)", 100)
+                    )
+
+                    gr.Markdown("### 📥 Final Rendered Video")
                     v3_final_mp4 = gr.File(label="📥 Final MP4 Video ဒေါင်းလုဒ်ဆွဲရန်")
+
+            # Real-time Live Preview Inputs Bindings
+            preview_inputs = [
+                v3_ratio, v3_sub_text, v3_font_color, v3_stroke_color, v3_font_size,
+                v3_sub_blur, v3_pos_x, v3_pos_y, v3_logo_file, v3_logo_pos, v3_logo_size
+            ]
+            for inp in preview_inputs:
+                inp.change(update_live_preview, inputs=preview_inputs, outputs=live_preview_box)
 
             v3_render_btn.click(
                 tab3_render_advanced,
@@ -492,14 +592,13 @@ with gr.Blocks(title=APP_TITLE) as demo:
                     v3_sub_blur, v3_pos_x, v3_pos_y,
                     v3_logo_file, v3_logo_pos, v3_logo_size
                 ],
-                outputs=[v3_preview, v3_final_mp4, v3_status]
+                outputs=[v3_final_mp4, v3_final_mp4, v3_status]
             )
 
     # ================= EVENT BINDINGS =================
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
-    v3_ratio.change(lambda r: get_ratio_css(r, "tab3_preview_container"), inputs=v3_ratio, outputs=v3_preview_css)
     
     v1_gen_btn.click(
         tab1_analyze, 
