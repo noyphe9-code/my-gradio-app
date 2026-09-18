@@ -1,5 +1,5 @@
-gradio
-edge-tts
+gradio>=4.0.0
 google-genai
+edge-tts
 yt-dlp
 ffmpeg-python
