@@ -1271,7 +1271,7 @@ video { border-radius: 12px !important; }
 # UI
 # ============================================================
 
-with gr.Blocks(title=APP_TITLE, css=CSS) as demo:
+with gr.Blocks(title=APP_TITLE) as demo:
     gr.Markdown(
         """
 # 🎬 AI Movie Recap Studio Pro
@@ -1292,7 +1292,6 @@ with gr.Blocks(title=APP_TITLE, css=CSS) as demo:
         )
         api_status = gr.Markdown(
             "ENV GEMINI_API_KEY ရှိရင် အလိုအလျောက်သုံးနိုင်ပါတယ်။",
-            scale=2,
         )
 
     # ========================================================
@@ -1341,7 +1340,7 @@ Upload ပြီးတာနဲ့ preview တန်းပေါ်မယ်။ 
         v1_script = gr.Textbox(
             label="📝 AI Movie Recap Script",
             lines=18,
-            show_copy_button=True,
+            buttons=["copy"],
         )
         with gr.Row():
             v1_model = gr.Textbox(label="Gemini Model", interactive=False)
@@ -1554,7 +1553,7 @@ X/Y က အလိုအလျောက် update ဖြစ်ပြီး Final 
                 t3_script = gr.Textbox(
                     label="📝 Generated Script",
                     lines=14,
-                    show_copy_button=True,
+                    buttons=["copy"],
                 )
                 t3_status = gr.Textbox(
                     label="Status",
@@ -1649,4 +1648,5 @@ if __name__ == "__main__":
         server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", "7860")),
         show_error=True,
+        css=CSS,
     )
