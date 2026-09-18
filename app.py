@@ -235,7 +235,7 @@ def run_gemini_video_analysis(target_media, ratio_choice):
     return clean_text, used_model, msg
 
 # =========================================================
-# TTS LOGIC
+# TTS LOGIC (TAB 2)
 # =========================================================
 async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="tab2_output.mp3"):
     clean_text = clean_script_for_tts(text)
@@ -249,7 +249,7 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     return output_name, srt_file, zip_file
 
 # =========================================================
-# TAB CONTROLLERS
+# TAB 1 & 2 CONTROLLERS
 # =========================================================
 def tab1_analyze(v_file, v_url, ratio):
     target = v_file if v_file else download_video_from_link(v_url)
@@ -271,11 +271,88 @@ def tab2_tts(text, voice, speed):
         print("Tab 2 Error:", e)
         return None, None, None, None
 
-def tab3_generate_video(video_file, link, ratio, sub_color, sub_x, sub_y, blur_enabled, blur_color, blur_y, blur_h, zoom, bright, crop_tb, crop_lr, orig_audio, bgm, resolution):
-    # ဤနေရာတွင် FFmpeg ဖြင့် Auto Cut, Auto Sync, Overlay, Crop စသည်တို့ကို ပြုလုပ်ပေးမည့် 
-    # Video Generation Logic ထည့်သွင်းရပါမည်။ Gradio UI ပေါ်လွင်စေရန် Mock Response ပေးထားပါသည်။
-    time.sleep(2) 
-    return video_file if video_file else download_video_from_link(link)
+# =========================================================
+# TAB 3 VIDEO GENERATOR (FFMPEG ENGINE)
+# =========================================================
+def tab3_generate_video(video_file, link, ratio, sub_color, sub_x, sub_y, blur_enabled, blur_color, blur_y, blur_h, zoom, bright, crop_tb, crop_lr, orig_audio, bgm, bgm_vol, resolution):
+    target = video_file if video_file else download_video_from_link(link)
+    if not target or not os.path.exists(target):
+        return None
+
+    output_file = "final_generated_video.mp4"
+    
+    # --- Video Filters တည်ဆောက်ခြင်း (Visual Edits) ---
+    vf_filters = []
+    
+    # 1. Brightness အလင်းအမှောင်
+    if bright != 1.0:
+        brightness_val = float(bright) - 1.0
+        vf_filters.append(f"eq=brightness={brightness_val}")
+        
+    # 2. Zoom & Crop လုပ်ခြင်း
+    if zoom > 1.0 or crop_tb > 0 or crop_lr > 0:
+        zoom_val = max(1.0, float(zoom))
+        vf_filters.append(f"scale=iw*{zoom_val}:ih*{zoom_val}")
+        if crop_tb > 0 or crop_lr > 0:
+            vf_filters.append(f"crop=in_w-{int(crop_lr)*2}:in_h-{int(crop_tb)*2}")
+            
+    # 3. Blur Box (မူရင်းစာတန်းထိုး ဖုံးရန်)
+    if blur_enabled:
+        color_hex = blur_color.replace('#', '0x') if blur_color.startswith('#') else '0x000000'
+        blur_y_percent = int(blur_y) / 100.0
+        blur_h_percent = int(blur_h) / 100.0
+        drawbox = f"drawbox=x=0:y=ih*{blur_y_percent}:w=iw:h=ih*{blur_h_percent}:color={color_hex}@1.0:t=fill"
+        vf_filters.append(drawbox)
+        
+    # 4. Resolution Setting (480p, 720p, 1080p)
+    res_h = 720
+    if resolution == "480p": res_h = 480
+    elif resolution == "1080p": res_h = 1080
+    # width ကို အချိုးကျ (-2) scale လုပ်ခြင်း
+    vf_filters.append(f"scale=-2:{res_h}")
+    
+    vf_string = ",".join(vf_filters) if vf_filters else "null"
+    
+    # --- FFmpeg Command စတင်ခြင်း ---
+    cmd = ["ffmpeg", "-y", "-i", target]
+    
+    # --- Audio Mixing (အသံပိုင်းဆိုင်ရာ) ---
+    filter_complex = f"[0:v]{vf_string}[vout]; "
+    has_audio_out = False
+    
+    if bgm and os.path.exists(bgm):
+        cmd.extend(["-i", bgm])
+        bgm_v = bgm_vol / 100.0
+        if orig_audio:
+            # မူရင်းအသံ + BGM ပေါင်းစပ်ခြင်း
+            filter_complex += f"[0:a]volume=1.0[a1]; [1:a]volume={bgm_v}[a2]; [a1][a2]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+        else:
+            # BGM သီးသန့် အသုံးပြုခြင်း
+            filter_complex += f"[1:a]volume={bgm_v}[aout]"
+        has_audio_out = True
+    else:
+        if orig_audio:
+            filter_complex += f"[0:a]volume=1.0[aout]"
+            has_audio_out = True
+        else:
+            # အသံလုံးဝ မပါပါက (Mute)
+            filter_complex = f"[0:v]{vf_string}[vout]"
+            
+    if has_audio_out:
+        cmd.extend(["-filter_complex", filter_complex, "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-c:a", "aac"])
+    else:
+        cmd.extend(["-filter_complex", filter_complex, "-map", "[vout]", "-an", "-c:v", "libx264"])
+        
+    cmd.extend(["-preset", "fast", output_file])
+
+    # Run FFmpeg Command
+    try:
+        print("Running FFmpeg Engine...")
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return output_file
+    except subprocess.CalledProcessError as e:
+        print("Video Generation Error:", e.stderr.decode())
+        return target # Error တက်ပါက မူရင်းဖိုင်ကိုသာ ပြန်ပေးမည်
 
 # =========================================================
 # GRADIO UI
@@ -356,23 +433,21 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         v3_bright = gr.Slider(0.5, 2.0, value=1.0, step=0.1, label="☀️ အလင်း/အမှောင် ချိန်ရန်")
 
                     with gr.Accordion("🎨 Blur Original Text (မူရင်းစာတန်းထိုး ဖုံးရန်)", open=False):
-                        v3_blur_enable = gr.Checkbox(label="ဝေဝါးသောအရောင် (Blur) သုံးမည်", value=True)
+                        v3_blur_enable = gr.Checkbox(label="ဝေဝါးသောအရောင် (Color Box) သုံးမည်", value=True)
                         v3_blur_color = gr.ColorPicker(label="ဖုံးမည့် အရောင်ရွေးရန်", value="#000000")
-                        v3_blur_y = gr.Slider(0, 100, value=85, label="↕️ Blur နေရာ (အပေါ်/အောက် ရွှေ့ရန်)")
-                        v3_blur_h = gr.Slider(10, 50, value=15, label="↕️ Blur အကြီး/အသေး")
+                        v3_blur_y = gr.Slider(0, 100, value=85, label="↕️ အရောင်ပြား နေရာ (အပေါ်/အောက် ရွှေ့ရန်)")
+                        v3_blur_h = gr.Slider(5, 50, value=15, label="↕️ အရောင်ပြား အကြီး/အသေး")
                         
                     with gr.Accordion("📝 Auto Subtitle (စာတန်းထိုး ပြင်ဆင်ရန်)", open=False):
                         v3_sub_color = gr.ColorPicker(label="စာလုံးအရောင်", value="#FFFFFF")
-                        v3_sub_x = gr.Slider(0, 100, value=50, label="↔️ စာတန်း ဘယ်/ညာ ရွှေ့ရန်")
-                        v3_sub_y = gr.Slider(0, 100, value=80, label="↕️ စာတန်း အပေါ်/အောက် ရွှေ့ရန်")
+                        v3_sub_x = gr.Slider(0, 100, value=50, label="↔️ စာတန်း ဘယ်/ညာ ရွှေ့ရန် (UI Preview)")
+                        v3_sub_y = gr.Slider(0, 100, value=80, label="↕️ စာတန်း အပေါ်/အောက် ရွှေ့ရန် (UI Preview)")
                         v3_sub_lines = gr.Radio(["၁ ကြောင်းထိုး", "၂ ကြောင်းထိုး"], value="၂ ကြောင်းထိုး", label="စာတန်းထိုး ပုံစံ")
 
                     with gr.Accordion("🎵 Audio & Voice (အသံပိုင်းဆိုင်ရာ)", open=False):
-                        v3_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 Voice (အလိုအလျောက် အသံထည့်ရန်)")
-                        v3_orig_audio = gr.Checkbox(label="မူရင်းအသံ ဖွင့်မည်", value=False)
-                        v3_bgm = gr.Audio(label="🎧 Background Song ထည့်ရန် (Bk song)", type="filepath")
-                        v3_voice_vol = gr.Slider(0, 200, value=100, label="🔊 Voice အသံအတိုးအကျယ်")
-                        v3_bgm_vol = gr.Slider(0, 100, value=20, label="🔈 Bk Song အသံအတိုးအကျယ်")
+                        v3_orig_audio = gr.Checkbox(label="မူရင်းအသံ ဖွင့်မည် (Original Audio)", value=True)
+                        v3_bgm = gr.Audio(label="🎧 Background Song ထည့်ရန် (BGM)", type="filepath")
+                        v3_bgm_vol = gr.Slider(0, 100, value=30, label="🔈 BGM အသံအတိုးအကျယ် (%)")
 
                     gr.Markdown("### 🚀 Final Export")
                     v3_resolution = gr.Radio(["480p", "720p", "1080p"], value="720p", label="🎥 Quality ရွေးချယ်ပါ")
@@ -384,11 +459,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
-    v1_gen_btn.click(
-        tab1_analyze, 
-        inputs=[v1_file, v1_url, v1_ratio], 
-        outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
-    )
+    v1_gen_btn.click(tab1_analyze, inputs=[v1_file, v1_url, v1_ratio], outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip])
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
     # Tab 3 Events
@@ -402,7 +473,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         inputs=[
             v3_file, v3_url, v3_ratio, v3_sub_color, v3_sub_x, v3_sub_y, 
             v3_blur_enable, v3_blur_color, v3_blur_y, v3_blur_h, v3_zoom, 
-            v3_bright, v3_crop_tb, v3_crop_lr, v3_orig_audio, v3_bgm, v3_resolution
+            v3_bright, v3_crop_tb, v3_crop_lr, v3_orig_audio, v3_bgm, v3_bgm_vol, v3_resolution
         ],
         outputs=v3_output
     )
