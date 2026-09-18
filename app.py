@@ -9,32 +9,31 @@ def call_gemini(api_key, prompt_text):
         return "ကျေးဇူးပြု၍ သင့်ရဲ့ Gemini API Key ကို အရင်ထည့်ပါ။"
     try:
         genai.configure(api_key=api_key)
-        # အသုံးပြုမည့် မော်ဒယ်
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt_text)
         return response.text
     except Exception as e:
         return f"အမှားအယွင်း ဖြစ်ပေါ်သွားသည်: {str(e)}"
 
-# Tab 1: Movie Recap
-def generate_recap(api_key, movie_info, tone):
-    prompt = f"Create an engaging movie recap with a {tone} tone based on the following details, written in Burmese: {movie_info}"
+# Tab 1: Movie Recap & Translation (Multi-language to Burmese)
+def translate_and_recap(api_key, source_text, source_lang):
+    prompt = f"Translate and create an engaging movie recap in Burmese from the following {source_lang} text: {source_text}"
     return call_gemini(api_key, prompt)
 
-# Tab 2: Translation
-def translate_text(api_key, text):
-    prompt = f"Translate the following text accurately into natural and engaging Burmese for content creation: {text}"
+# Tab 2: Script Writing (Video/Info to Script)
+def generate_script(api_key, summary, platform):
+    prompt = f"Create a professional YouTube/TikTok video script optimized for {platform} based on this summary, written in Burmese with visual cues: {summary}"
     return call_gemini(api_key, prompt)
 
-# Tab 3: Script Writer
-def generate_script(api_key, summary):
-    prompt = f"Create a professional YouTube video script with voiceover and visual cues based on this summary, written in Burmese: {summary}"
+# Tab 3: AI Voiceover Text Generator (Text to Speech optimization)
+def generate_tts_text(api_key, script_text):
+    prompt = f"Optimize the following script into clear, natural voiceover text suitable for Text-to-Speech (TTS) tools, written in Burmese: {script_text}"
     return call_gemini(api_key, prompt)
 
 # Gradio UI တည်ဆောက်ခြင်း
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}")
-    gr.Markdown("Gemini API ကို အသုံးပြု၍ ရုပ်ရှင်အနှစ်ချုပ်ခြင်း၊ ဘာသာပြန်ခြင်းနှင့် ဇာတ်ညွှန်းရေးသားခြင်းများ လုပ်ဆောင်နိုင်သော စနစ်။")
+    gr.Markdown("ဘာသာစကားမျိုးစုံမှ မြန်မာလို ဘာသာပြန်ခြင်း၊ ရုပ်ရှင်ဇာတ်ညွှန်းထုတ်ခြင်းနှင့် အသံသွင်းရန် စာသားပြင်ဆင်ခြင်းများ လုပ်ဆောင်နိုင်သော စနစ်။")
     
     with gr.Row():
         api_key_input = gr.Textbox(
@@ -44,36 +43,43 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
         )
     
     with gr.Tabs():
-        # Tab 1: Movie Recap
-        with gr.TabItem("🎥 Movie Recap"):
-            movie_input = gr.Textbox(label="ရုပ်ရှင်အကြောင်းအရာ (သို့) အချက်အလက်များ", lines=5, placeholder="ရုပ်ရှင်ဇာတ်လမ်းအကျဉ်းကို ရိုက်ထည့်ပါ...")
-            tone_dropdown = gr.Dropdown(
-                choices=["Exciting & Dramatic (စိတ်လှုပ်ရှားစရာ)", "Funny & Casual (ဟာသ/ပေါ့ပေါ့ပါးပါး)", "Serious & Professional (လေးနက်သော)"], 
-                value="Exciting & Dramatic (စိတ်လှုပ်ရှားစရာ)", 
-                label="ပြောပုံဆိုပုံ ပုံစံ (Tone)"
-            )
-            recap_btn = gr.Button("ဇာတ်လမ်းအနှစ်ချုပ် ထုတ်မည်", variant="primary")
-            recap_output = gr.Textbox(label="ရလဒ်", lines=10)
+        # Tab 1: Multi-language Translation & Recap
+        with gr.TabItem("🌐 Multi-Language to Burmese (ဘာသာပြန်နှင့် ဇာတ်လမ်း)"):
+            with gr.Row():
+                lang_dropdown = gr.Dropdown(
+                    choices=["English (အင်္ဂလိပ်)", "Thai (ထိုင်း)", "Korean (ကိုရီးယား)", "Chinese (တရုတ်)"], 
+                    value="English (အင်္ဂလိပ်)", 
+                    label="မူရင်း ဘာသာစကား (Source Language)"
+                )
+            source_input = gr.Textbox(label="မူရင်း စာသားများ ထည့်ရန်", lines=5, placeholder="အခြားဘာသာစကားဖြင့် ရေးထားသော ဇာတ်လမ်း သို့မဟုတ် စာသားများကို ဤနေရာတွင် ထည့်ပါ...")
+            trans_btn = gr.Button("မြန်မာလို ဘာသာပြန်၍ အနှစ်ချုပ်မည်", variant="primary")
+            trans_output = gr.Textbox(label="မြန်မာလို ရလဒ်", lines=10)
             
-            recap_btn.click(fn=generate_recap, inputs=[api_key_input, movie_input, tone_dropdown], outputs=recap_output)
+            trans_btn.click(fn=translate_and_recap, inputs=[api_key_input, source_input, lang_dropdown], outputs=trans_output)
 
-        # Tab 2: Translation
-        with gr.TabItem("🌐 Translation"):
-            trans_input = gr.Textbox(label="ဘာသာပြန်လိုသော စာသား (English)", lines=5, placeholder="အင်္ဂလိပ်လို စာသားများကို ဤနေရာတွင် ထည့်ပါ...")
-            trans_btn = gr.Button("မြန်မာလို ဘာသာပြန်မည်", variant="primary")
-            trans_output = gr.Textbox(label="ဘာသာပြန် ရလဒ်", lines=10)
-            
-            trans_btn.click(fn=translate_text, inputs=[api_key_input, trans_input], outputs=trans_output)
-
-        # Tab 3: Script Writer
-        with gr.TabItem("📝 Script Writer"):
-            script_input = gr.Textbox(label="ဇာတ်လမ်း အကျဉ်းချုပ်", lines=5, placeholder="ဇာတ်ညွှန်းထုတ်ရန် အချက်အလက်များ ထည့်ပါ...")
+        # Tab 2: Script Writer
+        with gr.TabItem("📝 Video to Script (ဗီဒီယိုဇာတ်ညွှန်း)"):
+            with gr.Row():
+                platform_dropdown = gr.Dropdown(
+                    choices=["YouTube Long-form", "TikTok / Shorts", "Facebook Reel"], 
+                    value="YouTube Long-form", 
+                    label="ပလက်ဖောင်း အမျိုးအစား"
+                )
+            script_input = gr.Textbox(label="ဇာတ်လမ်း အကျဉ်းချုပ် (သို့) အချက်အလက်များ", lines=5, placeholder="ဇာတ်ညွှန်းထုတ်ရန် အချက်အလက်များ ထည့်ပါ...")
             script_btn = gr.Button("ဗီဒီယို ဇာတ်ညွှန်း ထုတ်လုပ်မည်", variant="primary")
             script_output = gr.Textbox(label="ထုတ်လုပ်ထားသော ဇာတ်ညွှန်း", lines=10)
             
-            script_btn.click(fn=generate_script, inputs=[api_key_input, script_input], outputs=script_output)
+            script_btn.click(fn=generate_script, inputs=[api_key_input, script_input, platform_dropdown], outputs=script_output)
 
-# Server ပေါ်တွင် Port ချိတ်ဆက်ခြင်း (Render နှင့် Railway အတွက် Port Timeout Error ကင်းဝေးစေရန်)
+        # Tab 3: Text to Speech (TTS) Helper
+        with gr.TabItem("🎙️ Voiceover / TTS Text Prep (အသံထွက်စာသားပြင်ဆင်ရန်)"):
+            tts_input = gr.Textbox(label="ဇာတ်ညွှန်း စာသားများ", lines=5, placeholder="အသံထွက် (Narakeet/TTS) အတွက် ပြင်ဆင်လိုသော စာသားများကို ထည့်ပါ...")
+            tts_btn = gr.Button("အသံထွက်အတွက် စာသားပုံစံ ပြင်ဆင်မည်", variant="primary")
+            tts_output = gr.Textbox(label="အသံထွက်ရန် သင့်လျော်သော စာသားရလဒ်", lines=10)
+            
+            tts_btn.click(fn=generate_tts_text, inputs=[api_key_input, tts_input], outputs=tts_output)
+
+# Server ပေါ်တွင် Port ချိတ်ဆက်ခြင်း (Render / Railway အတွက်)
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     demo.launch(
