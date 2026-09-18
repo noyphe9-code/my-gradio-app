@@ -152,7 +152,8 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
         width: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
         height: auto !important;
-        object-fit: cover !important;
+        object-fit: contain !important;
+        background-color: #000000 !important;
         border-radius: 12px !important;
         display: block !important;
     }}
@@ -231,7 +232,7 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     return output_name, srt_file, zip_file
 
 # =========================================================
-# ADVANCED TAB 3: ONE CLIP STUDIO RENDERER (FULL OPTIONS)
+# ADVANCED TAB 3: ONE CLIP STUDIO RENDERER (FAST & FULL)
 # =========================================================
 def generate_advanced_one_clip(
     video_file, audio_file, resolution, ratio,
@@ -259,47 +260,76 @@ def generate_advanced_one_clip(
     else:
         base_w, base_h = "1280", "720"
 
-    # မူရင်းဗီဒီယို Blur လုံးဝမပါဘဲ သာမန်အတိုင်း ချိန်ဆပြသမည် (Zoom & Scale)
+    # ဗီဒီယိုအရွယ်အစားနှင့် အသွင်အပြင် (Zoom, Scale, Padding လုံးဝမပါဘဲ အတိအကျပြသရန်)
     eq_filter = f"eq=brightness={brightness}:contrast={contrast_val}"
-    video_filter = f"[0:v]{eq_filter},scale={base_w}:{base_h},fps=30"
+    video_filter = f"[0:v]{eq_filter},scale={base_w}:{base_h}:force_original_aspect_ratio=decrease,pad={base_w}:{base_h}:(ow-iw)/2:(oh-ih)/2,fps=30[v_base]"
 
-    # စာတန်းထိုးနှင့် အောက်ခံ Blur Box ထည့်သွင်းခြင်း (Drawtext & Position X/Y)
+    current_v = "v_base"
+    filter_chains = [video_filter]
+
+    # Logo Watermark ထည့်သွင်းခြင်း
+    has_logo = bool(logo_file and os.path.exists(logo_file))
+    if has_logo:
+        # Logo position mapping
+        if "Top-Left" in logo_pos or "ဘယ်ဘက်" in logo_pos and "ထိပ်" in logo_pos:
+            logo_x, logo_y = "10", "10"
+        elif "Top-Right" in logo_pos or "ညာဘက်" in logo_pos and "ထိပ်" in logo_pos:
+            logo_x, logo_y = f"W-w-10", "10"
+        elif "Bottom-Left" in logo_pos or "ဘယ်ဘက်" in logo_pos and "အောက်" in logo_pos:
+            logo_x, logo_y = "10", f"H-h-10"
+        else:
+            logo_x, logo_y = f"W-w-10", f"H-h-10"
+
+        filter_chains.append(f"[1:v]scale={logo_size}:-1[logo];[{current_v}][logo]overlay={logo_x}:{logo_y}[v_logo]")
+        current_v = "v_logo"
+        audio_input_idx = 2
+        logo_input_idx = 1
+    else:
+        audio_input_idx = 1
+
+    # စာတန်းထိုးနှင့် အောက်ခံ Blur Box ထည့်သွင်းခြင်း
     if sub_text and sub_text.strip():
-        # HTML color format ကို FFmpeg color format သို့ ပြောင်းရန် (#RRGGBB -> 0xRRGGBB)
         fc = font_color.replace("#", "0x") if font_color else "0xFFFF00"
         sc = stroke_color.replace("#", "0x") if stroke_color else "0x000000"
         
-        # Position formulas based on user X/Y sliders
         x_expr = f"(w-text_w)/2+({sub_pos_x})"
         y_expr = f"h-text_h-{max(50, 100 + sub_pos_y)}"
 
         if sub_blur_bg:
-            # စာတန်းထိုးနောက်ခံအတွက် box နှင့် boxcolor ထည့်ပေးခြင်း
-            video_filter += f",drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:box=1:boxcolor=black@0.5:boxborderw=10:x={x_expr}:y={y_expr}"
+            filter_chains.append(f"[{current_v}]drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:box=1:boxcolor=black@0.5:boxborderw=10:x={x_expr}:y={y_expr}[v_sub]")
         else:
-            video_filter += f",drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:x={x_expr}:y={y_expr}"
+            filter_chains.append(f"[{current_v}]drawtext=text='{sub_text}':fontcolor={fc}:fontsize={font_size}:borderw=2:bordercolor={sc}:x={x_expr}:y={y_expr}[v_sub]")
+        current_v = "v_sub"
 
-    video_filter += "[v]"
-
-    # Audio Mixing Configuration (Error လုံးဝကင်းရှင်းသော ပုံစံ)
+    # Audio Mixing Configuration
     has_bgm = bool(bgm_file and os.path.exists(bgm_file))
-    if has_bgm:
+    if has_logo and has_bgm:
+        # Inputs: 0=video, 1=logo, 2=audio(tts), 3=bgm
+        audio_mix = f"[{audio_input_idx}:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig];[3:a]volume={bgm_vol},aloop=loop=-1:size=2e9[bgm];[voice][orig][bgm]amix=inputs=3:duration=first:dropout_transition=2[a]"
+    elif has_logo and not has_bgm:
+        audio_mix = f"[{audio_input_idx}:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig];[voice][orig]amix=inputs=2:duration=first:dropout_transition=2[a]"
+    elif not has_logo and has_bgm:
         audio_mix = f"[1:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig];[2:a]volume={bgm_vol},aloop=loop=-1:size=2e9[bgm];[voice][orig][bgm]amix=inputs=3:duration=first:dropout_transition=2[a]"
     else:
         audio_mix = f"[1:a]volume=1.0[voice];[0:a]volume={orig_vol}[orig];[voice][orig]amix=inputs=2:duration=first:dropout_transition=2[a]"
 
+    filter_chains.append(audio_mix)
+    final_filter_complex = ";".join(filter_chains)
+
     cmd = [
         "ffmpeg", "-y",
         "-i", video_file,
-        "-i", audio_file,
     ]
+    if has_logo:
+        cmd.extend(["-i", logo_file])
+    cmd.extend(["-i", audio_file])
     if has_bgm:
         cmd.extend(["-i", bgm_file])
 
     cmd.extend([
-        "-filter_complex", f"{video_filter};{audio_mix}",
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+        "-filter_complex", final_filter_complex,
+        "-map", f"[{current_v}]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-c:a", "aac", "-b:a", "192k",
         "-shortest",
         output_filename
@@ -438,7 +468,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
                     with gr.Accordion("💬 စာတန်းထိုး ဒီဇိုင်းနှင့် နေရာရွှေ့ခြင်း (Subtitles, Blur & Position)", open=True):
                         v3_sub_text = gr.Textbox(label="📝 စာတန်းထိုးစာသား", lines=4, placeholder="ဗီဒီယိုပေါ်တွင် ဖော်ပြမည့် စာတန်းထိုးများကို ဤနေရာတွင် ထည့်ပါ...")
-                        v3_font_color = gr.ColorPicker(value="#FFFF00", label="🎨 စာလုံးအရောင် ရွေးရန်")
+                        v3_font_color = gr.ColorPicker(value="#FFFF00", label="🎨 စာလုံးအရောင် ရွေးချယ်ရန်")
                         v3_stroke_color = gr.ColorPicker(value="#000000", label="🖍️ စာလုံးအနားသတ် အရောင်")
                         v3_font_size = gr.Slider(16, 72, value=32, step=2, label="🔤 စာလုံးအရွယ်အစား (Font Size)")
                         v3_sub_blur = gr.Checkbox(label="🌫️ စာတန်းထိုး နောက်ခံ Blur (ဝေဝါးမှု) ထည့်မည်", value=True)
@@ -475,7 +505,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
-    v3_ratio.change(lambda r: get_ratio_css(r, "tab3_preview_container"), inputs=v3_ratio, outputs=v3_preview_css)
+    v3_ratio.change(lambda r: get_ratio_css(r, "tab3_ratio_preview") if False else get_ratio_css(r, "tab3_preview_container"), inputs=v3_ratio, outputs=v3_preview_css)
     
     v1_gen_btn.click(
         tab1_analyze, 
