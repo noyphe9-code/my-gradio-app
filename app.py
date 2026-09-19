@@ -134,7 +134,7 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO & FLIP STYLING
+# TAB 1 CSS
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False):
     configs = {
@@ -144,8 +144,6 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
         "9:16": {"aspect": "9 / 16", "max_w": "320px"},
     }
     cfg = configs.get(ratio, configs["1:1"])
-    
-    # ဘယ်ညာလှန်ရန်အတွက် CSS Transform
     transform_rule = "scaleX(-1)" if flip_horizontal else "scaleX(1)"
     
     return f"""
@@ -172,6 +170,79 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
         object-fit: cover !important;
         display: block !important;
         transform: {transform_rule} !important;
+    }}
+    </style>
+    """
+
+# =========================================================
+# TAB 3 DYNAMIC OVERLAY CSS
+# =========================================================
+def update_tab3_css(ratio, is_flipped, o_type, o_color, o_opacity, o_x, o_y, o_w, o_h):
+    configs = {
+        "1:1": {"aspect": "1 / 1", "max_w": "450px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "380px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "640px"},
+        "9:16": {"aspect": "9 / 16", "max_w": "320px"},
+    }
+    cfg = configs.get(ratio, configs["9:16"])
+    transform_rule = "scaleX(-1)" if is_flipped else "scaleX(1)"
+
+    # Subtitle Cover Logic
+    if o_type == "ဝေးဝါးသော (Blur)":
+        bg_css = "background-color: transparent;"
+        blur_val = int(o_opacity * 25) # Blur effect intensity (0 to 25px)
+        filter_css = f"backdrop-filter: blur({blur_val}px); -webkit-backdrop-filter: blur({blur_val}px);"
+    else:
+        # အရောင်ဆိုလျှင် (Hex မှ RGBA ပြောင်းခြင်း)
+        h = o_color.lstrip('#')
+        if len(h) == 6:
+            r, g, b = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+            bg_css = f"background-color: rgba({r}, {g}, {b}, {o_opacity});"
+        else:
+            bg_css = f"background-color: {o_color}; opacity: {o_opacity};"
+        filter_css = "backdrop-filter: none; -webkit-backdrop-filter: none;"
+
+    return f"""
+    <style id="tab3_preview_container-style">
+    #tab3_preview_container {{
+        width: 100% !important;
+        max-width: {cfg["max_w"]} !important;
+        margin: 0 auto !important;
+        transition: all 0.3s ease-in-out !important;
+    }}
+    #tab3_preview_container .video-container {{
+        width: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        height: auto !important;
+        background: #000 !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
+        position: relative !important; /* အရေးကြီး (Overlay တင်ရန်) */
+    }}
+    #tab3_preview_container video {{
+        width: 100% !important;
+        height: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        object-fit: cover !important;
+        display: block !important;
+        transform: {transform_rule} !important;
+    }}
+    
+    /* စာတန်းထိုး ဖုံးမည့် Box CSS */
+    #tab3_preview_container .video-container::after {{
+        content: '';
+        position: absolute;
+        left: {o_x}%;
+        top: {o_y}%;
+        width: {o_w}%;
+        height: {o_h}%;
+        transform: translate(-50%, -50%);
+        {bg_css}
+        {filter_css}
+        border-radius: 8px;
+        pointer-events: none;
+        z-index: 9999;
     }}
     </style>
     """
@@ -333,20 +404,38 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
         # --- TAB 3: ONE CLIP VIDEO ---
         with gr.TabItem("3️⃣ One Clip Video", id="tab_one_clip"):
+            
+            # Preview Video ကို အပေါ်ဆုံးမှာ ထားပေးထားသည်
+            gr.Markdown("### 📺 Video Preview")
+            with gr.Row():
+                # Tab 3 ကို ဖွင့်သည်နှင့် Default CSS ကို ထည့်သွင်းပေးရန်
+                t3_css = gr.HTML(update_tab3_css("9:16", False, "အရောင် (Color)", "#000000", 1.0, 50, 85, 60, 15))
+                t3_preview = gr.Video(label="Original Video Preview", elem_id="tab3_preview_container")
+
+            gr.Markdown("---")
+            
+            # Preview ရဲ့အောက်မှာ Control Panel များ
             with gr.Row():
                 with gr.Column(scale=1):
+                    gr.Markdown("**1. ဗီဒီယို ထည့်သွင်းရန် နှင့် Setting**")
                     t3_file = gr.Video(label="📹 Video File ထည့်ရန်")
                     t3_url = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok စသည်)")
                     t3_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
                     
                     t3_ratio = gr.Radio(["9:16", "3:4", "16:9", "1:1"], value="9:16", label="📐 Aspect Ratio ရွေးချယ်ရန်")
                     t3_flip = gr.Checkbox(label="↔️ ဗီဒီယိုကို ဘယ်ညာလှန်မည် (Horizontal Flip Preview)", value=False)
-                    
-                    gr.Markdown("*လိုအပ်သော တကယ့် Video Export လုပ်ဆောင်ချက်များကို ဤနေရာတွင် ဆက်လက်ထည့်သွင်းနိုင်ပါသည်။*")
                 
                 with gr.Column(scale=1):
-                    t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False))
-                    t3_preview = gr.Video(label="📺 Original Video Preview", elem_id="tab3_preview_container")
+                    gr.Markdown("**2. 🔲 မူရင်းစာတန်းထိုး ဖုံးရန် (Subtitle Cover)**")
+                    t3_o_type = gr.Radio(["အရောင် (Color)", "ဝေးဝါးသော (Blur)"], value="အရောင် (Color)", label="ဖုံးမည့် ပုံစံ")
+                    t3_o_color = gr.ColorPicker(value="#000000", label="အရောင်ရွေးချယ်ရန်")
+                    t3_o_opacity = gr.Slider(0.0, 1.0, value=1.0, step=0.1, label="အရောင်/အဝါး အတိုးအလျော့ (Opacity / Blur Intensity)")
+                    
+                    gr.Markdown("**နေရာနှင့် အရွယ်အစား ချိန်ညှိရန် (Slider ကိုဆွဲ၍ ရွှေ့ပါ)**")
+                    t3_o_x = gr.Slider(0, 100, value=50, step=1, label="ဘယ် / ညာ ရွှေ့ရန် (X Position %)")
+                    t3_o_y = gr.Slider(0, 100, value=85, step=1, label="အပေါ် / အောက် ရွှေ့ရန် (Y Position %)")
+                    t3_o_w = gr.Slider(10, 100, value=60, step=1, label="အကျယ် (Width %)")
+                    t3_o_h = gr.Slider(5, 50, value=15, step=1, label="အမြင့် (Height %)")
 
     # ================= EVENT BINDINGS =================
     
@@ -363,16 +452,14 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
     # --- Tab 3 Bindings ---
-    def update_tab3_css(ratio, is_flipped):
-        # Ratio နဲ့ Flip အခြေအနေပေါ်မူတည်ပြီး CSS Update လုပ်ခြင်း
-        return get_ratio_css(ratio, "tab3_preview_container", is_flipped)
-
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_preview)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_preview)
     
-    # Ratio ပြောင်းတဲ့အခါဖြစ်စေ၊ Flip အမှန်ခြစ် ခြစ်တဲ့အခါဖြစ်စေ CSS အသစ်ချိန်းပေးမည်
-    t3_ratio.change(update_tab3_css, inputs=[t3_ratio, t3_flip], outputs=t3_css)
-    t3_flip.change(update_tab3_css, inputs=[t3_ratio, t3_flip], outputs=t3_css)
+    # ပြုပြင်စရာ Settings မှန်သမျှ ပြောင်းလဲသည်နှင့် Preview Video ပေါ်တွင် ချက်ချင်း အလုပ်လုပ်စေရန်
+    t3_inputs = [t3_ratio, t3_flip, t3_o_type, t3_o_color, t3_o_opacity, t3_o_x, t3_o_y, t3_o_w, t3_o_h]
+    
+    for ctrl in t3_inputs:
+        ctrl.change(update_tab3_css, inputs=t3_inputs, outputs=t3_css)
 
 # Server Port Configuration for Render & Railway
 if __name__ == "__main__":
