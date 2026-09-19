@@ -134,9 +134,9 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO STYLING
+# DYNAMIC RATIO & FLIP STYLING
 # =========================================================
-def get_ratio_css(ratio, container_id="tab1_preview_container"):
+def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False):
     configs = {
         "1:1": {"aspect": "1 / 1", "max_w": "450px"},
         "3:4": {"aspect": "3 / 4", "max_w": "380px"},
@@ -144,6 +144,10 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
         "9:16": {"aspect": "9 / 16", "max_w": "320px"},
     }
     cfg = configs.get(ratio, configs["1:1"])
+    
+    # ဘယ်ညာလှန်ရန်အတွက် CSS Transform
+    transform_rule = "scaleX(-1)" if flip_horizontal else "scaleX(1)"
+    
     return f"""
     <style id="{container_id}-style">
     #{container_id} {{
@@ -167,6 +171,7 @@ def get_ratio_css(ratio, container_id="tab1_preview_container"):
         aspect-ratio: {cfg["aspect"]} !important;
         object-fit: cover !important;
         display: block !important;
+        transform: {transform_rule} !important;
     }}
     </style>
     """
@@ -298,7 +303,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v1_gen_btn = gr.Button("🚀 Recap Script စတင်ထုတ်မည်", variant="primary")
                 
                 with gr.Column(scale=1):
-                    v1_css = gr.HTML(get_ratio_css("1:1", "tab1_preview_container"))
+                    v1_css = gr.HTML(get_ratio_css("1:1", "tab1_preview_container", False))
                     v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
@@ -335,30 +340,39 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
                     
                     t3_ratio = gr.Radio(["9:16", "3:4", "16:9", "1:1"], value="9:16", label="📐 Aspect Ratio ရွေးချယ်ရန်")
-                    gr.Markdown("*လိုအပ်သော လုပ်ဆောင်ချက်များကို ဤနေရာတွင် ဆက်လက်ထည့်သွင်းပါမည်။*")
+                    t3_flip = gr.Checkbox(label="↔️ ဗီဒီယိုကို ဘယ်ညာလှန်မည် (Horizontal Flip Preview)", value=False)
+                    
+                    gr.Markdown("*လိုအပ်သော တကယ့် Video Export လုပ်ဆောင်ချက်များကို ဤနေရာတွင် ဆက်လက်ထည့်သွင်းနိုင်ပါသည်။*")
                 
                 with gr.Column(scale=1):
-                    t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container"))
+                    t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False))
                     t3_preview = gr.Video(label="📺 Original Video Preview", elem_id="tab3_preview_container")
 
     # ================= EVENT BINDINGS =================
-    # Tab 1 Bindings
+    
+    # --- Tab 1 Bindings ---
     v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
-    v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container"), inputs=v1_ratio, outputs=v1_css)
+    v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container", False), inputs=v1_ratio, outputs=v1_css)
     
     v1_gen_btn.click(
         tab1_analyze, 
         inputs=[v1_file, v1_url, v1_ratio], 
         outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
     )
-
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
-    # Tab 3 Bindings
+    # --- Tab 3 Bindings ---
+    def update_tab3_css(ratio, is_flipped):
+        # Ratio နဲ့ Flip အခြေအနေပေါ်မူတည်ပြီး CSS Update လုပ်ခြင်း
+        return get_ratio_css(ratio, "tab3_preview_container", is_flipped)
+
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_preview)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_preview)
-    t3_ratio.change(lambda r: get_ratio_css(r, "tab3_preview_container"), inputs=t3_ratio, outputs=t3_css)
+    
+    # Ratio ပြောင်းတဲ့အခါဖြစ်စေ၊ Flip အမှန်ခြစ် ခြစ်တဲ့အခါဖြစ်စေ CSS အသစ်ချိန်းပေးမည်
+    t3_ratio.change(update_tab3_css, inputs=[t3_ratio, t3_flip], outputs=t3_css)
+    t3_flip.change(update_tab3_css, inputs=[t3_ratio, t3_flip], outputs=t3_css)
 
 # Server Port Configuration for Render & Railway
 if __name__ == "__main__":
