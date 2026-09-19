@@ -132,7 +132,7 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO & STYLING (TAB 1 & TAB 3)
+# DYNAMIC RATIO & STYLING (TAB 1)
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False):
     configs = {
@@ -151,21 +151,28 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
         margin: 0 auto !important;
         transition: all 0.3s ease-in-out !important;
     }}
-    #{container_id} .video-container, #{container_id} video, #{container_id} .wrap {{
+    #{container_id} .video-container {{
         width: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
         height: auto !important;
-        max-height: none !important;
+        background: #000 !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
     }}
     #{container_id} video {{
+        width: 100% !important;
+        height: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
         object-fit: cover !important;
+        display: block !important;
         transform: {transform_rule} !important;
     }}
     </style>
     """
 
 # =========================================================
-# TAB 3 MASK STYLING OVERLAY
+# TAB 3 ADVANCED STYLING & SUBTITLE BLOCKER OVERLAY
 # =========================================================
 def hex_to_rgba(hex_color, opacity):
     hex_color = hex_color.lstrip('#')
@@ -179,7 +186,16 @@ def hex_to_rgba(hex_color, opacity):
         r, g, b = 0, 0, 0
     return f"rgba({r}, {g}, {b}, {opacity})"
 
-def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_y, pos_x, height_pct):
+def get_tab3_preview_html(ratio, flip_horizontal, mask_enabled, mask_type, color, opacity, blur_amount, pos_y, pos_x, height_pct, video_path=""):
+    configs = {
+        "9:16": {"aspect": "9 / 16", "max_w": "320px"},
+        "3:4": {"aspect": "3 / 4", "max_w": "380px"},
+        "16:9": {"aspect": "16 / 9", "max_w": "640px"},
+        "1:1": {"aspect": "1 / 1", "max_w": "450px"},
+    }
+    cfg = configs.get(ratio, configs["9:16"])
+    transform_rule = "scaleX(-1)" if flip_horizontal else "scaleX(1)"
+    
     mask_display = "block" if mask_enabled else "none"
     if "Blur" in mask_type:
         rgba_bg = hex_to_rgba(color, opacity)
@@ -190,10 +206,31 @@ def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_
         background_style = f"background-color: {rgba_bg};"
         backdrop_filter_style = ""
 
+    vid_src = video_path if video_path else ""
+
     return f"""
     <style>
-    #tab3_preview_container {{
+    #tab3_preview_wrapper {{
+        width: 100% !important;
+        max-width: {cfg["max_w"]} !important;
+        margin: 0 auto !important;
+    }}
+    #tab3_preview_wrapper .video-container {{
+        width: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        background: #000 !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
         position: relative !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
+    }}
+    #tab3_preview_wrapper video {{
+        width: 100% !important;
+        height: 100% !important;
+        aspect-ratio: {cfg["aspect"]} !important;
+        object-fit: cover !important;
+        display: block !important;
+        transform: {transform_rule} !important;
     }}
     #tab3_custom_mask {{
         display: {mask_display} !important;
@@ -206,11 +243,17 @@ def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_
         border-radius: 8px !important;
         {background_style}
         {backdrop_filter_style}
-        z-index: 100 !important;
+        z-index: 9999 !important;
         pointer-events: none !important;
         border: 1px dashed rgba(255, 255, 255, 0.4);
     }}
     </style>
+    <div id="tab3_preview_wrapper">
+        <div class="video-container">
+            <video controls autoplay muted loop src="{vid_src}"></video>
+            <div id="tab3_custom_mask"></div>
+        </div>
+    </div>
     """
 
 # =========================================================
@@ -358,7 +401,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                 v2_zip = gr.File(label="📦 SRT ZIP")
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
-        # --- TAB 3: ONE CLIP VIDEO (Enhanced with gr.Video & Mask Overlay) ---
+        # --- TAB 3: ONE CLIP VIDEO (Enhanced with Integrated Blur/Color Mask Preview) ---
         with gr.TabItem("3️⃣ One Clip Video", id="tab_one_clip"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -380,12 +423,11 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_pos_y = gr.Slider(0, 100, value=85, step=1, label="↕️ အပေါ်အောက် နေရာရွေ့ရန် (Top Position %)")
                     t3_pos_x = gr.Slider(0, 100, value=50, step=1, label="↔️ ဘယ်ညာ နေရာရွေ့ရန် (Left Position %)")
                     t3_height = gr.Slider(5, 50, value=12, step=1, label="📏 အထူအပါး အမြင့် (Height Size %)")
+                    
+                    t3_video_path_state = gr.State("")
 
                 with gr.Column(scale=1):
-                    t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12))
-                    t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container")
-                    # Hidden HTML container to inject the mask DOM element inside the video block
-                    t3_mask_dom = gr.HTML('<div id="tab3_custom_mask"></div>')
+                    t3_preview = gr.HTML(get_tab3_preview_html("9:16", False, True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, ""))
                     gr.Markdown("💡 *အထက်ပါ Preview ပေါ်တွင် မူရင်းစာတန်းထိုးများကို ဖုံးကွယ်ရန် ချိန်ကိုက်ထားသော Mask ကို တိုက်ရိုက်တွေ့မြင်နိုင်ပါသည်။*")
 
     # ================= EVENT BINDINGS =================
@@ -401,20 +443,30 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
     # --- Tab 3 Bindings ---
-    t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_preview)
-    t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_preview)
-    
-    def update_tab3_styling(ratio, flip, mask_en, mask_t, col, op, blur, py, px, h):
-        return (
-            get_ratio_css(ratio, "tab3_preview_container", flip) + get_tab3_mask_css(mask_en, mask_t, col, op, blur, py, px, h),
-            f'<div id="tab3_custom_mask"></div>'
-        )
+    t3_inputs = [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height, t3_video_path_state]
+
+    t3_file.change(
+        lambda f, r, f_l, m_e, m_t, c, o, b, py, px, h: get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, f if f else ""),
+        inputs=[t3_file] + t3_inputs[:-1],
+        outputs=[t3_preview]
+    )
+
+    def load_t3_url(url, r, f_l, m_e, m_t, c, o, b, py, px, h):
+        downloaded = download_video_from_link(url)
+        path = downloaded if downloaded else ""
+        return path, get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, path)
+
+    t3_load_btn.click(
+        load_t3_url,
+        inputs=[t3_url] + t3_inputs[:-1],
+        outputs=[t3_preview]
+    )
 
     for inp in [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height]:
         inp.change(
-            update_tab3_styling,
-            inputs=[t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height],
-            outputs=[t3_css, t3_mask_dom]
+            lambda r, f_l, m_e, m_t, c, o, b, py, px, h, p: get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, p),
+            inputs=t3_inputs,
+            outputs=[t3_preview]
         )
 
 # Server Port Configuration for Render & Railway
