@@ -4,6 +4,7 @@ import time
 import zipfile
 import subprocess
 import asyncio
+import html
 import gradio as gr
 import edge_tts
 import yt_dlp
@@ -180,7 +181,8 @@ def hex_to_rgba(hex_color, opacity):
         opacity = 0.6
     return f"rgba({r}, {g}, {b}, {opacity:.3f})"
 
-def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_y, pos_x, height_pct):
+def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_y, pos_x, height_pct,
+                      subtitle_color="#FFFFFF", subtitle_size=28, subtitle_y=82, subtitle_x=50):
     mask_display = "block" if mask_enabled else "none"
     mask_type = mask_type or ""
     rgba_bg = hex_to_rgba(color, opacity)
@@ -190,8 +192,13 @@ def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_
         pos_y = max(0, min(100, float(pos_y)))
         pos_x = max(0, min(100, float(pos_x)))
         height_pct = max(5, min(50, float(height_pct)))
+        subtitle_size = max(10, min(96, float(subtitle_size)))
+        subtitle_y = max(0, min(100, float(subtitle_y)))
+        subtitle_x = max(0, min(100, float(subtitle_x)))
     except (TypeError, ValueError):
         blur_amount, pos_y, pos_x, height_pct = 10, 85, 50, 12
+        subtitle_size, subtitle_y, subtitle_x = 28, 82, 50
+    subtitle_rgba = hex_to_rgba(subtitle_color, 1.0)
     backdrop_filter_style = (
         f"backdrop-filter: blur({blur_amount}px); "
         f"-webkit-backdrop-filter: blur({blur_amount}px);"
@@ -231,8 +238,30 @@ def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_
         pointer-events: none !important;
         border: 1px dashed rgba(255, 255, 255, 0.4);
     }}
+    #tab3_stage #tab3_custom_subtitle {{
+        display: block !important;
+        position: absolute !important;
+        left: {subtitle_x}% !important;
+        top: {subtitle_y}% !important;
+        transform: translate(-50%, -50%) !important;
+        max-width: 90% !important;
+        color: {subtitle_rgba} !important;
+        font-size: {subtitle_size}px !important;
+        line-height: 1.25 !important;
+        font-weight: 700 !important;
+        text-align: center !important;
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        z-index: 22 !important;
+        pointer-events: none !important;
+        text-shadow: 2px 2px 3px #000, -1px -1px 2px #000 !important;
+    }}
     </style>
     """
+
+def get_tab3_overlay_html(sample_text="(နမူနာစာ)"):
+    safe_text = html.escape(str(sample_text or "(နမူနာစာ)"), quote=True)
+    return f'<div id="tab3_custom_mask"></div><div id="tab3_custom_subtitle">{safe_text}</div>'
 
 # =========================================================
 # GEMINI GENERATION
@@ -401,12 +430,20 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_pos_y = gr.Slider(0, 100, value=85, step=1, label="↕️ အပေါ်အောက် နေရာရွေ့ရန် (Top Position %)")
                     t3_pos_x = gr.Slider(0, 100, value=50, step=1, label="↔️ ဘယ်ညာ နေရာရွေ့ရန် (Left Position %)")
                     t3_height = gr.Slider(5, 50, value=12, step=1, label="📏 အထူအပါး အမြင့် (Height Size %)")
+                    gr.Markdown("### 🔤 Preview စာတန်းထိုး အလှဆင်ခြင်း")
+                    t3_subtitle_text = gr.Textbox(value="(နမူနာစာ)", label="📝 Preview မှာပြမည့် စာတန်းထိုးစာ", lines=2)
+                    with gr.Row():
+                        t3_subtitle_color = gr.ColorPicker(value="#FFFFFF", label="🎨 စာလုံးအရောင်")
+                        t3_subtitle_size = gr.Slider(10, 96, value=28, step=1, label="🔠 စာလုံးအကြီးအသေး")
+                    with gr.Row():
+                        t3_subtitle_y = gr.Slider(0, 100, value=82, step=1, label="↕️ စာတန်း အပေါ်/အောက်")
+                        t3_subtitle_x = gr.Slider(0, 100, value=50, step=1, label="↔️ စာတန်း ဘယ်/ညာ")
 
                 with gr.Column(scale=1):
                     with gr.Group(elem_id="tab3_stage"):
-                        t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12))
+                        t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, "#FFFFFF", 28, 82, 50))
                         t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container")
-                        t3_mask_dom = gr.HTML('<div id="tab3_custom_mask"></div>', elem_id="tab3_mask_dom")
+                        t3_mask_dom = gr.HTML(get_tab3_overlay_html(), elem_id="tab3_mask_dom")
                     gr.Markdown("💡 *အထက်ပါ Preview ပေါ်တွင် မူရင်းစာတန်းထိုးများကို ဖုံးကွယ်ရန် ချိန်ကိုက်ထားသော Mask ကို ဗီဒီယိုပေါ်တွင် တိုက်ရိုက်ထပ်နေအောင် စီစဉ်ပေးထားပါသည်။*")
 
     # ================= EVENT BINDINGS =================
@@ -425,16 +462,25 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_preview)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_preview)
     
-    def update_tab3_styling(ratio, flip, mask_en, mask_t, col, op, blur, py, px, h):
+    def update_tab3_styling(ratio, flip, mask_en, mask_t, col, op, blur, py, px, h,
+                            subtitle_text, subtitle_color, subtitle_size, subtitle_y, subtitle_x):
         return (
-            get_ratio_css(ratio, "tab3_preview_container", flip) + get_tab3_mask_css(mask_en, mask_t, col, op, blur, py, px, h),
-            f'<div id="tab3_custom_mask"></div>'
+            get_ratio_css(ratio, "tab3_preview_container", flip) + get_tab3_mask_css(
+                mask_en, mask_t, col, op, blur, py, px, h,
+                subtitle_color, subtitle_size, subtitle_y, subtitle_x
+            ),
+            get_tab3_overlay_html(subtitle_text)
         )
 
-    for inp in [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height]:
+    tab3_style_inputs = [
+        t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity,
+        t3_blur_amt, t3_pos_y, t3_pos_x, t3_height, t3_subtitle_text,
+        t3_subtitle_color, t3_subtitle_size, t3_subtitle_y, t3_subtitle_x,
+    ]
+    for inp in tab3_style_inputs:
         inp.change(
             update_tab3_styling,
-            inputs=[t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height],
+            inputs=tab3_style_inputs,
             outputs=[t3_css, t3_mask_dom]
         )
 
