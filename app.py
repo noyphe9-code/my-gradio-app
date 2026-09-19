@@ -16,7 +16,6 @@ APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -70,7 +69,7 @@ def clean_script_for_tts(script_text):
         if not line:
             continue
         line = line.replace("**", "").replace("__", "").replace("`", "")
-        line = re.sub(r"^\s*\[(?:Visual\vert{}Scene\vert{}Video\vert{}Audio\vert{}Camera\vert{}Action\vert{}Narration\vert{}Narrator\vert{}Dialogue\vert{}Intro)\]\s*[:\-]?\s*", "", line, flags=re.IGNORECASE)
+        line = re.sub(r"^\s*\[(?:Visual|Scene|Video|Audio|Camera|Action|Narration|Narrator|Dialogue|Intro)\]\s*[:\-]?\s*", "", line, flags=re.IGNORECASE)
         line = re.sub(r"^\s*Narrator\s*:\s*", "", line, flags=re.IGNORECASE)
         if line.lower() in ["movie recap", "recap script", "burmese recap script", "script"] or line.startswith("---"):
             continue
@@ -97,7 +96,6 @@ def generate_srt_and_zip(script_text, prefix="myanmar_recap"):
         end_time = current_time + duration
         srt_content += f"{idx}\n{seconds_to_srt_time(start_time)} --> {seconds_to_srt_time(end_time)}\n{line}\n\n"
         current_time = end_time
-
     srt_filename = f"{prefix}_subtitle.srt"
     zip_filename = f"{prefix}_subtitle.zip"
     with open(srt_filename, "w", encoding="utf-8-sig") as f:
@@ -134,7 +132,7 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO & FLIP STYLING
+# DYNAMIC RATIO & STYLING (TAB 1)
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False):
     configs = {
@@ -145,7 +143,6 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
     }
     cfg = configs.get(ratio, configs["1:1"])
     transform_rule = "scaleX(-1)" if flip_horizontal else "scaleX(1)"
-    
     return f"""
     <style id="{container_id}-style">
     #{container_id} {{
@@ -175,7 +172,7 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
     """
 
 # =========================================================
-# TAB 3 ADVANCED OVERLAY & MASK STYLING
+# TAB 3 ADVANCED STYLING & SUBTITLE BLOCKER OVERLAY
 # =========================================================
 def hex_to_rgba(hex_color, opacity):
     hex_color = hex_color.lstrip('#')
@@ -189,7 +186,7 @@ def hex_to_rgba(hex_color, opacity):
         r, g, b = 0, 0, 0
     return f"rgba({r}, {g}, {b}, {opacity})"
 
-def get_tab3_preview_css(ratio, flip_horizontal, mask_enabled, mask_type, color, opacity, blur_amount, pos_y, pos_x, height_pct):
+def get_tab3_preview_html(ratio, flip_horizontal, mask_enabled, mask_type, color, opacity, blur_amount, pos_y, pos_x, height_pct, video_path=""):
     configs = {
         "9:16": {"aspect": "9 / 16", "max_w": "320px"},
         "3:4": {"aspect": "3 / 4", "max_w": "380px"},
@@ -199,35 +196,28 @@ def get_tab3_preview_css(ratio, flip_horizontal, mask_enabled, mask_type, color,
     cfg = configs.get(ratio, configs["9:16"])
     transform_rule = "scaleX(-1)" if flip_horizontal else "scaleX(1)"
     
-    # Mask styling logic
     mask_display = "block" if mask_enabled else "none"
-    
-    background_style = ""
-    backdrop_filter_style = ""
-    
-    if mask_type == "Blur (နောက်ခံဝဲဝါးရန်)":
-        # Pure blur background with translucent tint
+    if "Blur" in mask_type:
         rgba_bg = hex_to_rgba(color, opacity)
         background_style = f"background-color: {rgba_bg};"
         backdrop_filter_style = f"backdrop-filter: blur({blur_amount}px); -webkit-backdrop-filter: blur({blur_amount}px);"
     else:
-        # Solid or custom color background
         rgba_bg = hex_to_rgba(color, opacity)
         background_style = f"background-color: {rgba_bg};"
         backdrop_filter_style = ""
 
+    vid_src = video_path if video_path else ""
+
     return f"""
-    <style id="tab3_preview_container-style">
+    <style>
     #tab3_preview_container {{
         width: 100% !important;
         max-width: {cfg["max_w"]} !important;
         margin: 0 auto !important;
-        transition: all 0.3s ease-in-out !important;
     }}
     #tab3_preview_container .video-container {{
         width: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
-        height: auto !important;
         background: #000 !important;
         border-radius: 12px !important;
         overflow: hidden !important;
@@ -242,7 +232,6 @@ def get_tab3_preview_css(ratio, flip_horizontal, mask_enabled, mask_type, color,
         display: block !important;
         transform: {transform_rule} !important;
     }}
-    /* Original subtitle cover mask */
     #tab3_custom_mask {{
         display: {mask_display} !important;
         position: absolute !important;
@@ -259,23 +248,24 @@ def get_tab3_preview_css(ratio, flip_horizontal, mask_enabled, mask_type, color,
         border: 1px dashed rgba(255, 255, 255, 0.4);
     }}
     </style>
+    <div id="tab3_preview_container">
+        <div class="video-container">
+            <video controls autoplay muted loop src="{vid_src}"></video>
+            <div id="tab3_custom_mask"></div>
+        </div>
+    </div>
     """
 
 # =========================================================
 # GEMINI GENERATION
 # =========================================================
 def build_recap_prompt(selected_ratio):
-    return f"""
-သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ 
-Target Video Frame Ratio: {selected_ratio}
-ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ တိကျသေချာစွာ ကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို ရေးသားပေးပါ-
-
+    return f""" သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ Target Video Frame Ratio: {selected_ratio} ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ တိကျသေချာစွာ ကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို ရေးသားပေးပါ-
 [စည်းမျဉ်းများ]
 ၁။ ဗီဒီယိုထဲတွင် တကယ်ဖြစ်ပျက်နေသော အဖြစ်အပျက် အမှန်များကိုသာ အချိန်အစဉ်လိုက် အတိုချုံး၍ တိကျမှန်ကန်စွာ ရေးပါ။
 ၂။ ဇာတ်ကောင်များ၏ ပြောစကားများကို သဘာဝကျကျ ဆွဲဆောင်မှုရှိသော မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ပြန်ဆိုပါ။
 ၃။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
-၄။ TTS အသံထွက်ဖတ်ရာတွင် ချောမွေ့စေရန် စာကြောင်းတစ်ကြောင်းချင်းစီကို တိုတိုရှင်းရှင်းနှင့် အဓိပ္ပာယ်ပြည့်စုံစွာ ရေးပေးပါ။
-"""
+၄။ TTS အသံထွက်ဖတ်ရာတွင် ချောမွေ့စေရန် စာကြောင်းတစ်ကြောင်းချင်းစီကို တိုတိုရှင်းရှင်းနှင့် အဓိပ္ပာယ်ပြည့်စုံစွာ ရေးပေးပါ။ """
 
 def generate_with_retry(client, uploaded_file, prompt):
     retry_delays = [3, 7]
@@ -304,7 +294,7 @@ def run_gemini_video_analysis(target_media, ratio_choice):
     valid, msg = validate_video_duration(target_media)
     if not valid:
         raise ValueError(msg)
-
+    
     client = genai.Client(api_key=SAVED_API_KEY)
     uploaded_file = client.files.upload(file=target_media)
     
@@ -318,7 +308,7 @@ def run_gemini_video_analysis(target_media, ratio_choice):
             raise TimeoutError("Gemini Video Processing ကြာမြင့်လွန်းနေပါသည်။")
         time.sleep(3)
         uploaded_file = client.files.get(name=uploaded_file.name)
-
+        
     prompt = build_recap_prompt(ratio_choice)
     script_text, used_model = generate_with_retry(client, uploaded_file, prompt)
     clean_text = clean_script_for_tts(script_text)
@@ -366,7 +356,7 @@ def tab2_tts(text, voice, speed):
 # =========================================================
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Myanmar Voice-Over**")
-
+    
     with gr.Tabs() as main_tabs:
         # --- API KEY TAB ---
         with gr.TabItem("🔑 API Key Setting", id="tab_key"):
@@ -383,18 +373,14 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     v1_file = gr.Video(label="📹 Video File တင်ရန်")
                     v1_url = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok, Facebook စသည်)")
                     v1_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
-                    
                     v1_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="1:1", label="📐 Preview Screen Aspect Ratio")
                     v1_gen_btn = gr.Button("🚀 Recap Script စတင်ထုတ်မည်", variant="primary")
-                
                 with gr.Column(scale=1):
                     v1_css = gr.HTML(get_ratio_css("1:1", "tab1_preview_container", False))
                     v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
-                    
                     go_to_tts_btn = gr.Button("🎙️ Tab 2 (TTS) သို့ သွားရောက် အသံထုတ်မည် ➡️", variant="secondary")
-
             with gr.Row():
                 v1_srt = gr.File(label="📄 SRT စာတန်းထိုး ဖိုင်")
                 v1_zip = gr.File(label="📦 SRT ZIP ဒေါင်းလုဒ်")
@@ -413,7 +399,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
             with gr.Row():
                 v2_srt = gr.File(label="📄 SRT")
                 v2_zip = gr.File(label="📦 SRT ZIP")
-
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
         # --- TAB 3: ONE CLIP VIDEO (Enhanced with Subtitle Blur/Cover Mask) ---
@@ -423,94 +408,70 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_file = gr.Video(label="📹 Video File ထည့်ရန်")
                     t3_url = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok စသည်)")
                     t3_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
-                    
                     t3_ratio = gr.Radio(["9:16", "3:4", "16:9", "1:1"], value="9:16", label="📐 Aspect Ratio ရွေးချယ်ရန်")
                     t3_flip = gr.Checkbox(label="↔️ ဗီဒီယိုကို ဘယ်ညာလှန်မည် (Horizontal Flip Preview)", value=False)
                     
                     gr.Markdown("### 🔲 မူရင်းစာတန်းထိုးဖုံးရန် (Blur / Color Cover Mask)")
                     t3_mask_toggle = gr.Checkbox(label="✨ စာတန်းထိုးဖုံးရန် Mask အသုံးပြုမည်", value=True)
                     t3_mask_type = gr.Radio(["Blur (နောက်ခံဝဲဝါးရန်)", "Solid/Custom Color (အရောင်သီးသန့်)"], value="Blur (နောက်ခံဝဲဝါးရန်)", label="🎨 Mask အမျိုးအစား")
-                    
                     with gr.Row():
                         t3_color = gr.ColorPicker(value="#000000", label="🎨 အရောင်ရွေးချယ်ရန်")
                         t3_opacity = gr.Slider(0.0, 1.0, value=0.6, step=0.05, label="💧 အရောင်အတိုးအလျော့ (Opacity)")
-                    
-                    t3_blur_amt = gr.Slider(0, 30, value=10, step=1, label="🌫️ Blur ဝေဝါးမှု ပမာဏ (Blur Strength)")
+                        t3_blur_amt = gr.Slider(0, 30, value=10, step=1, label="🌫️ Blur ဝေဝါးမှု ပမာဏ (Blur Strength)")
                     
                     gr.Markdown("### 📍 အပေါ်အောက် / ဘယ်ညာ ရွေ့လျားမှု နှင့် အထူအပါး")
                     t3_pos_y = gr.Slider(0, 100, value=85, step=1, label="↕️ အပေါ်အောက် နေရာရွေ့ရန် (Top Position %)")
                     t3_pos_x = gr.Slider(0, 100, value=50, step=1, label="↔️ ဘယ်ညာ နေရာရွေ့ရန် (Left Position %)")
                     t3_height = gr.Slider(5, 50, value=12, step=1, label="📏 အထူအပါး အမြင့် (Height Size %)")
                     
-                
+                    # Store hidden state for loaded video path
+                    t3_video_path_state = gr.State("")
+
                 with gr.Column(scale=1):
-                    t3_css = gr.HTML(get_tab3_preview_css("9:16", False, True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12))
-                    
-                    # Custom wrapper container containing both video and interactive mask preview overlay
-                    t3_preview = gr.HTML("""
-                    <div id="tab3_preview_container">
-                        <div class="video-container">
-                            <video controls autoplay muted loop src=""></video>
-                            <div id="tab3_custom_mask"></div>
-                        </div>
-                    </div>
-                    """)
+                    t3_preview = gr.HTML(get_tab3_preview_html("9:16", False, True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, ""))
                     gr.Markdown("💡 *အထက်ပါ Preview ပေါ်တွင် မူရင်းစာတန်းထိုးများကို ဖုံးကွယ်ရန် ချိန်ကိုက်ထားသော Mask ကို တိုက်ရိုက်တွေ့မြင်နိုင်ပါသည်။*")
 
-    # ================= EVENT BINDINGS =================
-    
-    # --- Tab 1 Bindings ---
-    v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
-    v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
-    v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container", False), inputs=v1_ratio, outputs=v1_css)
-    
-    v1_gen_btn.click(
-        tab1_analyze, 
-        inputs=[v1_file, v1_url, v1_ratio], 
-        outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
-    )
-    go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
+# ================= EVENT BINDINGS =================
+# --- Tab 1 Bindings ---
+v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
+v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
+v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container", False), inputs=v1_ratio, outputs=v1_css)
+v1_gen_btn.click(
+    tab1_analyze,
+    inputs=[v1_file, v1_url, v1_ratio],
+    outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
+)
+go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
-    # --- Tab 3 Bindings ---
-    def update_tab3_all(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height, current_video):
-        css_code = get_tab3_preview_css(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height)
-        vid_src = current_video if current_video else ""
-        html_code = f"""
-        {css_code}
-        <div id="tab3_preview_container">
-            <div class="video-container">
-                <video controls autoplay muted loop src="{vid_src}"></video>
-                <div id="tab3_custom_mask"></div>
-            </div>
-        </div>
-        """
-        return html_code
+# --- Tab 3 Bindings ---
+def update_tab3_preview(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height, video_path):
+    return get_tab3_preview_html(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height, video_path)
 
-    # Link load helper for tab 3
-    def load_t3_url_to_preview(url, ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height):
-        downloaded = download_video_from_link(url)
-        return update_tab3_all(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height, downloaded)
+t3_inputs = [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height, t3_video_path_state]
 
-    t3_file.change(
-        lambda f, r, f_l, m_e, m_t, c, o, b, py, px, h: update_tab3_all(r, f_l, m_e, m_t, c, o, b, py, px, h, f),
-        inputs=[t3_file, t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height],
+t3_file.change(
+    lambda f, r, f_l, m_e, m_t, c, o, b, py, px, h: (f, get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, f if f else "")),
+    inputs=[t3_file] + t3_inputs[:-1],
+    outputs=[t3_video_path_state, t3_preview]
+)
+
+def load_t3_url(url, r, f_l, m_e, m_t, c, o, b, py, px, h):
+    downloaded = download_video_from_link(url)
+    path = downloaded if downloaded else ""
+    return path, get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, path)
+
+t3_load_btn.click(
+    load_t3_url,
+    inputs=[t3_url] + t3_inputs[:-1],
+    outputs=[t3_video_path_state, t3_preview]
+)
+
+for inp in [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height]:
+    inp.change(
+        update_tab3_preview,
+        inputs=t3_inputs,
         outputs=[t3_preview]
     )
-
-    t3_load_btn.click(
-        load_t3_url_to_preview,
-        inputs=[t3_url, t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height],
-        outputs=[t3_preview]
-    )
-
-    # Update on all interactive configuration controls changes
-    t3_controls = [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height]
-    for control in t3_controls:
-        control.change(
-            lambda r, f_l, m_e, m_t, c, o, b, py, px, h: update_tab3_all(r, f_l, m_e, m_t, c, o, b, py, px, h, None),
-            inputs=t3_controls,
-            outputs=[t3_preview]
-        )
 
 # Server Port Configuration for Render & Railway
 if __name__ == "__main__":
