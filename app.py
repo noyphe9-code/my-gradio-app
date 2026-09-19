@@ -172,7 +172,7 @@ def update_video_preview(video_path):
     norm_path = normalize_filepath(video_path)
     if not norm_path or not os.path.exists(norm_path):
         return '<div style="width:100%; height:100%; background:#000; display:flex; align-items:center; justify-content:center; color:#fff;">ဗီဒီယိုမရှိပါ</div>'
-    return f'<video src="/file={norm_path}" controls autoplay loop muted style="width:100%; height:100%; object-fit:cover;"></video>'
+    return f'<video src="/file={norm_path}" controls autoplay loop muted playsinline preload="auto" style="width:100%; height:100%; object-fit:cover;"></video>'
 
 def load_tab3_video_html(link):
     path = download_video_from_link(link)
@@ -277,7 +277,7 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
     else:
         cmd += ["-vf", video_filter, "-af", f"volume={original_volume}", "-map", "0:v:0", "-map", "0:a:0?"]
     
-    # 🚀 ပိုမိုမြန်ဆန်သော Ultrafast Preset နှင့် Threads များ အသုံးပြုခြင်း
+    # 🚀 Ultrafast Preset နှင့် Threads များ အသုံးပြုခြင်းဖြင့် ပိုမိုမြန်ဆန်စေခြင်း
     cmd += [
         "-c:v", "libx264", 
         "-preset", "ultrafast", 
@@ -458,7 +458,7 @@ def build_recap_prompt(selected_ratio):
 ၃။ Narrator ရှင်းပြချက်များနှင့် ဇာတ်ကောင်များ၏ အပြန်အလှန်ပြောစကားများကို သဘာဝကျကျ ရောစပ်ပါ။ ဇာတ်ကောင်ပြောစကားကို မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ရေးပြီး quotation mark သုံးနိုင်သည်။
 ၄။ မျက်နှာပြင်ပေါ် ဖြစ်ရပ်၊ လှုပ်ရှားမှု၊ reaction နှင့် ပြောစကားအချိန်ကို တစ်ကြောင်းချင်းစီတွင် အဓိပ္ပာယ်ပြည့်စုံစွာ ထိန်းညှိပါ။ မမြင်ရ/မကြားရသောအချက်ကို မဖန်တီးပါနှင့်။
 ၅။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များ၊ speaker label များ၊ title များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
-၆။ TTS နှင့် မြန်မာစာတန်းထိုးအတွက် စာကြောင်းတိုတို၊ အသံထွက်လွယ်ပြီး စကားပြောသလို ရေးပါ။ စာကြောင်းတစ်ကြောင်းစီကို line break ခွဲပါ။
+٦။ TTS နှင့် မြန်မာစာတန်းထိုးအတွက် စာကြောင်းတိုတို၊ အသံထွက်လွယ်ပြီး စကားပြောသလို ရေးပါ။ စာကြောင်းတစ်ကြောင်းစီကို line break ခွဲပါ။
 ၇။ အဆုံးတွင် ဇာတ်လမ်း၏ အဓိကအကျိုးဆက်/စိတ်ဝင်စားဖွယ် payoff ကို ပြတ်သားစွာပေးပြီး မလိုအပ်သော အမြင်သုံးသပ်ချက် မထည့်ပါနှင့်。 """
 
 def generate_with_retry(client, uploaded_file, prompt):
