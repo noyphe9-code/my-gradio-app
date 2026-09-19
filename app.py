@@ -209,7 +209,8 @@ def load_tab3_video(link):
 # =========================================================
 # DYNAMIC RATIO & STYLING (TAB 1 & TAB 3)
 # =========================================================
-def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False):
+def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False,
+                  zoom=1, brightness=0, contrast=1):
     configs = {
         "1:1": {"aspect": "1 / 1", "max_w": "450px"},
         "3:4": {"aspect": "3 / 4", "max_w": "380px"},
@@ -217,7 +218,13 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
         "9:16": {"aspect": "9 / 16", "max_w": "320px"},
     }
     cfg = configs.get(ratio, configs["1:1"])
-    transform_rule = "scaleX(-1)" if flip_horizontal else "scaleX(1)"
+    try:
+        zoom = max(1.0, min(2.0, float(zoom)))
+        brightness = max(-1.0, min(1.0, float(brightness)))
+        contrast = max(0.0, min(3.0, float(contrast)))
+    except (TypeError, ValueError):
+        zoom, brightness, contrast = 1.0, 0.0, 1.0
+    transform_rule = f"scaleX({'-1' if flip_horizontal else '1'}) scale({zoom:.3f})"
     return f"""
     <style id="{container_id}-style">
     #{container_id} {{
@@ -235,6 +242,8 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
     #{container_id} video {{
         object-fit: cover !important;
         transform: {transform_rule} !important;
+        filter: brightness({1 + brightness:.3f}) contrast({contrast:.3f}) !important;
+        transform-origin: center center !important;
     }}
     </style>
     """
@@ -536,7 +545,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
                 with gr.Column(scale=1):
                     with gr.Group(elem_id="tab3_stage"):
-                        t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, "#FFFFFF", 28, 82, 50))
+                        t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False, 1, 0, 1) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, "#FFFFFF", 28, 82, 50))
                         t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container")
                         t3_mask_dom = gr.HTML(get_tab3_overlay_html(), elem_id="tab3_mask_dom")
                     t3_output_video = gr.Video(label="✅ ထုတ်ပြီးသော Final Video")
@@ -567,9 +576,10 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     )
     
     def update_tab3_styling(ratio, flip, mask_en, mask_t, col, op, blur, py, px, h,
-                            subtitle_text, subtitle_color, subtitle_size, subtitle_y, subtitle_x):
+                            zoom, brightness, contrast, subtitle_text, subtitle_color,
+                            subtitle_size, subtitle_y, subtitle_x):
         return (
-            get_ratio_css(ratio, "tab3_preview_container", flip) + get_tab3_mask_css(
+            get_ratio_css(ratio, "tab3_preview_container", flip, zoom, brightness, contrast) + get_tab3_mask_css(
                 mask_en, mask_t, col, op, blur, py, px, h,
                 subtitle_color, subtitle_size, subtitle_y, subtitle_x
             ),
@@ -578,7 +588,8 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 
     tab3_style_inputs = [
         t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity,
-        t3_blur_amt, t3_pos_y, t3_pos_x, t3_height, t3_subtitle_text,
+        t3_blur_amt, t3_pos_y, t3_pos_x, t3_height, t3_zoom, t3_brightness,
+        t3_contrast, t3_subtitle_text,
         t3_subtitle_color, t3_subtitle_size, t3_subtitle_y, t3_subtitle_x,
     ]
     for inp in tab3_style_inputs:
