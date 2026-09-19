@@ -117,7 +117,6 @@ def generate_srt_and_zip(script_text, prefix="myanmar_recap"):
     return srt_filename, zip_filename
 
 def generate_synced_srt_and_zip(script_text, media_path, prefix="tab3_synced"):
-    """စာကြောင်းများကို Narrator/Audio duration အလိုက် proportionally ခွဲပြီး SRT ထုတ်သည်။"""
     clean_text = clean_script_for_tts(script_text)
     duration = get_video_duration(media_path) if media_path else None
     if not clean_text or not duration or duration <= 0:
@@ -169,14 +168,18 @@ def download_video_from_link(link):
         print("Download Error:", e)
     return None
 
+def load_tab3_video(link):
+    path = download_video_from_link(link)
+    norm_path = normalize_filepath(path)
+    return norm_path, norm_path
+
 def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
                       original_volume, audio_volume, zoom, brightness, contrast,
                       tts_text, tts_voice, tts_speed, output_resolution, ratio):
-    """Tab 3 အတွက် အသံနှင့် video effect များကို ffmpeg ဖြင့် output video အဖြစ်ထုတ်ပေးသည်။"""
     video_path = normalize_filepath(video_path) or normalize_filepath(fallback_video_path)
     audio_file = normalize_filepath(audio_file)
     if not video_path or not os.path.exists(video_path):
-        return None, "⚠️ အရင်ဆုံး Tab 3 တွင် Video File တင်ပါ။", None, None
+        return None, "⚠️ အရင်ဆုံး Tab 3 တွင် Video File တင်ပါ သို့မဟုတ် Link မှ ဒေါင်းလုဒ်ဆွဲပါ။", None, None
     try:
         original_volume = max(0.0, min(2.0, float(original_volume)))
         audio_volume = max(0.0, min(2.0, float(audio_volume)))
@@ -280,10 +283,6 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
         return None, "❌ Video Render အချိန်ကြာလွန်းသဖြင့် ရပ်လိုက်ပါသည်။", None, None
     except Exception as exc:
         return None, f"❌ Render Error: {exc}", None, None
-
-def load_tab3_video(link):
-    path = download_video_from_link(link)
-    return path, path
 
 # =========================================================
 # DYNAMIC RATIO & STYLING (TAB 1 & TAB 3)
@@ -578,7 +577,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
                 v2_zip = gr.File(label="📦 SRT ZIP")
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
-        # --- TAB 3: ONE CLIP VIDEO (Using gr.Video with absolute mask overlay) ---
+        # --- TAB 3: ONE CLIP VIDEO ---
         with gr.TabItem("3️⃣ One Clip Video", id="tab_one_clip"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -645,7 +644,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
 
     # ================= EVENT BINDINGS =================
     # --- Tab 1 Bindings ---
-    v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
+    v1_file.change(lambda f: normalize_filepath(f), inputs=v1_file, outputs=v1_preview)
     v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
     v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container", False), inputs=v1_ratio, outputs=v1_css)
     v1_gen_btn.click(
@@ -656,8 +655,16 @@ with gr.Blocks(title=APP_TITLE) as demo:
     go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
 
     # --- Tab 3 Bindings ---
-    t3_file.change(lambda f: (f, f), inputs=t3_file, outputs=[t3_preview, t3_source])
-    t3_load_btn.click(load_tab3_video, inputs=t3_url, outputs=[t3_preview, t3_source])
+    t3_file.change(
+        lambda f: (normalize_filepath(f), normalize_filepath(f)), 
+        inputs=t3_file, 
+        outputs=[t3_preview, t3_source]
+    )
+    t3_load_btn.click(
+        load_tab3_video, 
+        inputs=t3_url, 
+        outputs=[t3_preview, t3_source]
+    )
     t3_render_btn.click(
         render_tab3_video,
         inputs=[t3_source, t3_file, t3_audio_mode, t3_audio_file, t3_original_volume,
