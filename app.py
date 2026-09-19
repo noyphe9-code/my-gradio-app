@@ -424,54 +424,53 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_pos_x = gr.Slider(0, 100, value=50, step=1, label="↔️ ဘယ်ညာ နေရာရွေ့ရန် (Left Position %)")
                     t3_height = gr.Slider(5, 50, value=12, step=1, label="📏 အထူအပါး အမြင့် (Height Size %)")
                     
-                    # Store hidden state for loaded video path
                     t3_video_path_state = gr.State("")
 
                 with gr.Column(scale=1):
                     t3_preview = gr.HTML(get_tab3_preview_html("9:16", False, True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, ""))
                     gr.Markdown("💡 *အထက်ပါ Preview ပေါ်တွင် မူရင်းစာတန်းထိုးများကို ဖုံးကွယ်ရန် ချိန်ကိုက်ထားသော Mask ကို တိုက်ရိုက်တွေ့မြင်နိုင်ပါသည်။*")
 
-# ================= EVENT BINDINGS =================
-# --- Tab 1 Bindings ---
-v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
-v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
-v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container", False), inputs=v1_ratio, outputs=v1_css)
-v1_gen_btn.click(
-    tab1_analyze,
-    inputs=[v1_file, v1_url, v1_ratio],
-    outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
-)
-go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
-
-# --- Tab 3 Bindings ---
-def update_tab3_preview(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height, video_path):
-    return get_tab3_preview_html(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height, video_path)
-
-t3_inputs = [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height, t3_video_path_state]
-
-t3_file.change(
-    lambda f, r, f_l, m_e, m_t, c, o, b, py, px, h: (f, get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, f if f else "")),
-    inputs=[t3_file] + t3_inputs[:-1],
-    outputs=[t3_video_path_state, t3_preview]
-)
-
-def load_t3_url(url, r, f_l, m_e, m_t, c, o, b, py, px, h):
-    downloaded = download_video_from_link(url)
-    path = downloaded if downloaded else ""
-    return path, get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, path)
-
-t3_load_btn.click(
-    load_t3_url,
-    inputs=[t3_url] + t3_inputs[:-1],
-    outputs=[t3_video_path_state, t3_preview]
-)
-
-for inp in [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height]:
-    inp.change(
-        update_tab3_preview,
-        inputs=t3_inputs,
-        outputs=[t3_preview]
+    # ================= EVENT BINDINGS =================
+    # --- Tab 1 Bindings ---
+    v1_file.change(lambda f: f, inputs=v1_file, outputs=v1_preview)
+    v1_load_btn.click(download_video_from_link, inputs=v1_url, outputs=v1_preview)
+    v1_ratio.change(lambda r: get_ratio_css(r, "tab1_preview_container", False), inputs=v1_ratio, outputs=v1_css)
+    v1_gen_btn.click(
+        tab1_analyze,
+        inputs=[v1_file, v1_url, v1_ratio],
+        outputs=[v1_script_out, v2_input_text, v1_status, v1_srt, v1_zip]
     )
+    go_to_tts_btn.click(lambda: gr.Tabs(selected="tab_tts"), outputs=main_tabs)
+
+    # --- Tab 3 Bindings ---
+    def update_tab3_preview(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height, video_path):
+        return get_tab3_preview_html(ratio, is_flipped, mask_enabled, mask_type, color, opacity, blur_amt, pos_y, pos_x, height, video_path)
+
+    t3_inputs = [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height, t3_video_path_state]
+
+    t3_file.change(
+        lambda f, r, f_l, m_e, m_t, c, o, b, py, px, h: (f, get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, f if f else "")),
+        inputs=[t3_file] + t3_inputs[:-1],
+        outputs=[t3_video_path_state, t3_preview]
+    )
+
+    def load_t3_url(url, r, f_l, m_e, m_t, c, o, b, py, px, h):
+        downloaded = download_video_from_link(url)
+        path = downloaded if downloaded else ""
+        return path, get_tab3_preview_html(r, f_l, m_e, m_t, c, o, b, py, px, h, path)
+
+    t3_load_btn.click(
+        load_t3_url,
+        inputs=[t3_url] + t3_inputs[:-1],
+        outputs=[t3_video_path_state, t3_preview]
+    )
+
+    for inp in [t3_ratio, t3_flip, t3_mask_toggle, t3_mask_type, t3_color, t3_opacity, t3_blur_amt, t3_pos_y, t3_pos_x, t3_height]:
+        inp.change(
+            update_tab3_preview,
+            inputs=t3_inputs,
+            outputs=[t3_preview]
+        )
 
 # Server Port Configuration for Render & Railway
 if __name__ == "__main__":
