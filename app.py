@@ -242,14 +242,21 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
     selected_ratio = ratio if ratio in resolution_sizes[selected_resolution] else "16:9"
     width, height = resolution_sizes[selected_resolution][selected_ratio]
     output_path = os.path.abspath(f"tab3_rendered_{output_resolution or '720p'}_{int(time.time())}.mp4")
+    
     video_filter = (
         f"scale={int(width * zoom)}:{int(height * zoom)}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height}:(in_w-out_w)/2:(in_h-out_h)/2,"
         f"eq=brightness={brightness}:contrast={contrast}"
     )
+    
     if subtitle_file and os.path.exists(subtitle_file):
-        subtitle_path = subtitle_file.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-        video_filter += f",subtitles='{subtitle_path}'"
+        abs_sub_path = os.path.abspath(subtitle_file).replace("\\", "/")
+        if ":" in abs_sub_path:
+            drive, path_part = abs_sub_path.split(":", 1)
+            abs_sub_path = f"{drive}\\:{path_part}"
+        abs_sub_path = abs_sub_path.replace("'", "\\\\'")
+        video_filter += f",subtitles='{abs_sub_path}'"
+
     cmd = ["ffmpeg", "-y", "-i", video_path]
     mix_with_original = audio_mode in (
         "🎵 Original + MP3 BGM", "🎙️ Narrator + Original Video"
@@ -277,7 +284,6 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
     else:
         cmd += ["-vf", video_filter, "-af", f"volume={original_volume}", "-map", "0:v:0", "-map", "0:a:0?"]
     
-    # 🚀 Ultrafast Preset နှင့် Threads များ အသုံးပြုခြင်းဖြင့် ပိုမိုမြန်ဆန်စေခြင်း
     cmd += [
         "-c:v", "libx264", 
         "-preset", "ultrafast", 
@@ -295,7 +301,7 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
         synced_srt, synced_zip = generate_synced_srt_and_zip(
             tts_text, output_path, prefix=f"tab3_synced_{int(time.time())}"
         )
-        return output_path, f"✅ {output_resolution} Video ကို Auto-sync/Auto-trim ဖြင့် ထုတ်ပြီးပါပြီ။", synced_srt, synced_zip
+        return output_path, f"✅ {output_resolution} Video ကို အောင်မြင်စွာ ထုတ်ယူပြီးပါပြီ။", synced_srt, synced_zip
     except subprocess.TimeoutExpired:
         return None, "❌ Video Render အချိန်ကြာလွန်းသဖြင့် ရပ်လိုက်ပါသည်။", None, None
     except Exception as exc:
@@ -458,7 +464,7 @@ def build_recap_prompt(selected_ratio):
 ၃။ Narrator ရှင်းပြချက်များနှင့် ဇာတ်ကောင်များ၏ အပြန်အလှန်ပြောစကားများကို သဘာဝကျကျ ရောစပ်ပါ။ ဇာတ်ကောင်ပြောစကားကို မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ရေးပြီး quotation mark သုံးနိုင်သည်။
 ၄။ မျက်နှာပြင်ပေါ် ဖြစ်ရပ်၊ လှုပ်ရှားမှု၊ reaction နှင့် ပြောစကားအချိန်ကို တစ်ကြောင်းချင်းစီတွင် အဓိပ္ပာယ်ပြည့်စုံစွာ ထိန်းညှိပါ။ မမြင်ရ/မကြားရသောအချက်ကို မဖန်တီးပါနှင့်။
 ၅။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များ၊ speaker label များ၊ title များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
-٦။ TTS နှင့် မြန်မာစာတန်းထိုးအတွက် စာကြောင်းတိုတို၊ အသံထွက်လွယ်ပြီး စကားပြောသလို ရေးပါ။ စာကြောင်းတစ်ကြောင်းစီကို line break ခွဲပါ။
+၆။ TTS နှင့် မြန်မာစာတန်းထိုးအတွက် စာကြောင်းတိုတို၊ အသံထွက်လွယ်ပြီး စကားပြောသလို ရေးပါ။ စာကြောင်းတစ်ကြောင်းစီကို line break ခွဲပါ။
 ၇။ အဆုံးတွင် ဇာတ်လမ်း၏ အဓိကအကျိုးဆက်/စိတ်ဝင်စားဖွယ် payoff ကို ပြတ်သားစွာပေးပြီး မလိုအပ်သော အမြင်သုံးသပ်ချက် မထည့်ပါနှင့်。 """
 
 def generate_with_retry(client, uploaded_file, prompt):
