@@ -160,7 +160,7 @@ def download_video_from_link(link):
 
 def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
                       original_volume, audio_volume, zoom, brightness, contrast,
-                      tts_text, tts_voice, tts_speed, output_resolution):
+                      tts_text, tts_voice, tts_speed, output_resolution, ratio):
     """Tab 3 အတွက် အသံနှင့် video effect များကို ffmpeg ဖြင့် output video အဖြစ်ထုတ်ပေးသည်။"""
     video_path = video_path or fallback_video_path
     if not video_path or not os.path.exists(video_path):
@@ -174,6 +174,12 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
     except (TypeError, ValueError):
         return None, "❌ Audio/Video setting တန်ဖိုး မမှန်ပါ။", None, None
 
+    auto_narration = audio_mode in ("🎙️ Tab 3 Thiha/Nilar Voice", "🎙️ Narrator + Original Video")
+    if auto_narration and (not tts_text or tts_text.strip() in ("(နမူနာစာ)", "နမူနာစာ")):
+        try:
+            tts_text, _, _ = run_gemini_video_analysis(video_path, ratio)
+        except Exception as exc:
+            return None, f"❌ Video ဇာတ်လမ်းကို AI နားလည်ပြီး Script မထုတ်နိုင်ပါ: {exc}", None, None
     selected_audio = audio_file
     if audio_mode == "🎙️ Tab 3 Thiha/Nilar Voice":
         tts_text = clean_script_for_tts(tts_text) or "(နမူနာစာ)"
@@ -191,6 +197,12 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
     if selected_audio and not os.path.exists(selected_audio):
         return None, "⚠️ ရွေးထားသော Audio ဖိုင်ကို မတွေ့ပါ။", None, None
 
+    subtitle_file = None
+    if auto_narration and tts_text:
+        subtitle_file, _ = generate_synced_srt_and_zip(
+            tts_text, selected_audio, prefix=f"tab3_burnin_{int(time.time())}"
+        )
+
     resolutions = {"480p": (854, 480), "720p": (1280, 720), "1080p": (1920, 1080)}
     width, height = resolutions.get(output_resolution, resolutions["720p"])
     output_path = os.path.abspath(f"tab3_rendered_{output_resolution or '720p'}_{int(time.time())}.mp4")
@@ -200,6 +212,9 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
         f"eq=brightness={brightness}:contrast={contrast}"
     )
+    if subtitle_file and os.path.exists(subtitle_file):
+        subtitle_path = subtitle_file.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        video_filter += f",subtitles='{subtitle_path}'"
     cmd = ["ffmpeg", "-y", "-i", video_path]
     mix_with_original = audio_mode in (
         "🎵 Original + MP3 BGM", "🎙️ Narrator + Original Video"
@@ -390,12 +405,15 @@ def get_tab3_overlay_html(sample_text="(နမူနာစာ)"):
 # GEMINI GENERATION
 # =========================================================
 def build_recap_prompt(selected_ratio):
-    return f""" သင်သည် ထိပ်တန်း Professional Movie Recap Scriptwriter ဖြစ်သည်။ Target Video Frame Ratio: {selected_ratio} ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ တိကျသေချာစွာ ကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို ရေးသားပေးပါ-
+    return f""" သင်သည် TikTok နှင့် Facebook အတွက် retention မြင့်သော Professional Movie Recap Scriptwriter ဖြစ်သည်။ Target Video Frame Ratio: {selected_ratio} ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ တိကျသေချာစွာ ကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို ရေးသားပေးပါ-
 [စည်းမျဉ်းများ]
-၁။ ဗီဒီယိုထဲတွင် တကယ်ဖြစ်ပျက်နေသော အဖြစ်အပျက် အမှန်များကိုသာ အချိန်အစဉ်လိုက် အတိုချုံး၍ တိကျမှန်ကန်စွာ ရေးပါ။
-၂။ ဇာတ်ကောင်များ၏ ပြောစကားများကို သဘာဝကျကျ ဆွဲဆောင်မှုရှိသော မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ပြန်ဆိုပါ။
-၃။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
-၄။ TTS အသံထွက်ဖတ်ရာတွင် ချောမွေ့စေရန် စာကြောင်းတစ်ကြောင်းချင်းစီကို တိုတိုရှင်းရှင်းနှင့် အဓိပ္ပာယ်ပြည့်စုံစွာ ရေးပေးပါ။ """
+၁။ ပထမ ၁-၂ စာကြောင်းတွင် အံ့အားသင့်စရာ Hook ထည့်ပြီး ကြည့်ရှုသူ ဆက်ကြည့်ချင်အောင် ရေးပါ။ Clickbait အလွန်အကျွံမလုပ်ဘဲ ဗီဒီယိုအတွင်း အမှန်တကယ်ဖြစ်ရပ်ကိုသာ အသုံးပြုပါ။
+၂။ ဇာတ်လမ်းကို အစမှအဆုံး အချိန်အစဉ်လိုက်၊ မြန်မြန်ဆန်ဆန်နှင့် suspense ရှိအောင် ပြောပါ။ အဖြစ်အပျက်တိုင်းကို မလိုအပ်ဘဲရှည်မရေးပါနှင့်။
+၃။ Narrator ရှင်းပြချက်များနှင့် ဇာတ်ကောင်များ၏ အပြန်အလှန်ပြောစကားများကို သဘာဝကျကျ ရောစပ်ပါ။ ဇာတ်ကောင်ပြောစကားကို မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ရေးပြီး quotation mark သုံးနိုင်သည်။
+၄။ မျက်နှာပြင်ပေါ် ဖြစ်ရပ်၊ လှုပ်ရှားမှု၊ reaction နှင့် ပြောစကားအချိန်ကို တစ်ကြောင်းချင်းစီတွင် အဓိပ္ပာယ်ပြည့်စုံစွာ ထိန်းညှိပါ။ မမြင်ရ/မကြားရသောအချက်ကို မဖန်တီးပါနှင့်။
+၅။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များ၊ speaker label များ၊ title များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
+၆။ TTS နှင့် မြန်မာစာတန်းထိုးအတွက် စာကြောင်းတိုတို၊ အသံထွက်လွယ်ပြီး စကားပြောသလို ရေးပါ။ စာကြောင်းတစ်ကြောင်းစီကို line break ခွဲပါ။
+၇။ အဆုံးတွင် ဇာတ်လမ်း၏ အဓိကအကျိုးဆက်/စိတ်ဝင်စားဖွယ် payoff ကို ပြတ်သားစွာပေးပြီး မလိုအပ်သော အမြင်သုံးသပ်ချက် မထည့်ပါနှင့်။ """
 
 def generate_with_retry(client, uploaded_file, prompt):
     retry_delays = [3, 7]
@@ -565,7 +583,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
                         value="🔊 Original Video အသံ", label="အသံရွေးချယ်ရန်"
                     )
                     t3_audio_file = gr.Audio(type="filepath", label="🎵 MP3 BGM / Voice ဖိုင်တင်ရန်")
-                    t3_tts_text = gr.Textbox(value="(နမူနာစာ)", label="🎙️ Narrator ပြောစကား / ဖတ်မည့်စာ", lines=3)
+                    t3_tts_text = gr.Textbox(value="(နမူနာစာ)", label="🎙️ Narrator ပြောစကား / (နမူနာစာထားလျှင် AI က Video ဇာတ်လမ်းအလိုက်ရေးမည်)", lines=3)
                     t3_tts_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 Thiha / Nilar ရွေးရန်")
                     t3_tts_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ အသံ အနှေး/အမြန် (%)")
                     t3_original_volume = gr.Slider(0, 2, value=1, step=0.05, label="🔊 မူရင်း Video အသံတိုး/လျော့")
@@ -615,7 +633,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
         render_tab3_video,
         inputs=[t3_source, t3_file, t3_audio_mode, t3_audio_file, t3_original_volume,
                 t3_audio_volume, t3_zoom, t3_brightness, t3_contrast,
-                t3_tts_text, t3_tts_voice, t3_tts_speed, t3_resolution],
+                t3_tts_text, t3_tts_voice, t3_tts_speed, t3_resolution, t3_ratio],
         outputs=[t3_output_video, t3_render_status, t3_synced_srt, t3_synced_zip]
     )
     
