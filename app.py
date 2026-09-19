@@ -17,7 +17,6 @@ APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -136,7 +135,7 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO, FLIP & SUBTITLE MASK STYLING
+# DYNAMIC RATIO, FLIP & SUBTITLE MASK STYLING (FIXED)
 # =========================================================
 
 def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False, mask_mode="None", mask_color="#000000", mask_opacity=0.8, mask_height=60, pos_y=90, pos_x=50, blur_val=10):
@@ -152,7 +151,8 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
     mask_css_code = ""
     if mask_mode != "None":
         if mask_mode == "Blur":
-            mask_bg = f"backdrop-filter: blur({blur_val}px); -webkit-backdrop-filter: blur({blur_val}px); background: rgba(0,0,0,{mask_opacity});"
+            # Backdrop blur အတွက် video player ပေါ်တွင် အလွှာထပ်ပေးခြင်း
+            mask_bg = f"backdrop-filter: blur({blur_val}px); -webkit-backdrop-filter: blur({blur_val}px); background: rgba(255,255,255,{mask_opacity * 0.1});"
         elif mask_mode == "Solid/Color":
             c = mask_color.lstrip('#')
             rgb = tuple(int(c[i:i+2], 16) for i in (0, 2, 4)) if len(c) == 6 else (0, 0, 0)
@@ -161,7 +161,11 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
             mask_bg = "background: transparent;"
 
         mask_css_code = f"""
-        #{container_id} .sub-mask-box {{
+        #{container_id} {{
+            position: relative !important;
+        }}
+        #{container_id}::after {{
+            content: "" !important;
             position: absolute !important;
             width: 90% !important;
             height: {mask_height}px !important;
@@ -170,51 +174,26 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
             transform: translate(-{pos_x}%, -{pos_y}%) !important;
             {mask_bg}
             border-radius: 8px !important;
-            z-index: 999 !important;
+            z-index: 9999 !important;
             pointer-events: none !important;
-        }}
-        """
-    else:
-        mask_css_code = f"""
-        #{container_id} .sub-mask-box {{
-            display: none !important;
         }}
         """
 
     return f"""
-    <style id="{container_id}-style">
+    <style>
         #{container_id} {{
             width: 100% !important;
             max-width: {cfg["max_w"]} !important;
             margin: 0 auto !important;
-            position: relative !important;
-            transition: all 0.3s ease-in-out !important;
-        }}
-        #{container_id} .video-container {{
-            width: 100% !important;
             aspect-ratio: {cfg["aspect"]} !important;
-            height: auto !important;
-            background: #000 !important;
-            border-radius: 12px !important;
-            overflow: hidden !important;
-            position: relative !important;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
         }}
         #{container_id} video {{
-            width: 100% !important;
-            height: 100% !important;
+            transform: {transform_rule} !important;
             aspect-ratio: {cfg["aspect"]} !important;
             object-fit: cover !important;
-            display: block !important;
-            transform: {transform_rule} !important;
         }}
         {mask_css_code}
     </style>
-    <div id="{container_id}">
-        <div class="video-container">
-            <div class="sub-mask-box"></div>
-        </div>
-    </div>
     """
 
 # =========================================================
