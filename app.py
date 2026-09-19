@@ -168,10 +168,16 @@ def download_video_from_link(link):
         print("Download Error:", e)
     return None
 
-def load_tab3_video(link):
+def update_video_preview(video_path):
+    norm_path = normalize_filepath(video_path)
+    if not norm_path or not os.path.exists(norm_path):
+        return '<div style="width:100%; height:100%; background:#000; display:flex; align-items:center; justify-content:center; color:#fff;">ဗီဒီယိုမရှိပါ</div>'
+    return f'<video src="/file={norm_path}" controls autoplay loop muted style="width:100%; height:100%; object-fit:cover;"></video>'
+
+def load_tab3_video_html(link):
     path = download_video_from_link(link)
     norm_path = normalize_filepath(path)
-    return norm_path, norm_path
+    return update_video_preview(norm_path), norm_path
 
 def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
                       original_volume, audio_volume, zoom, brightness, contrast,
@@ -270,7 +276,18 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
         cmd += ["-vf", video_filter, "-an"]
     else:
         cmd += ["-vf", video_filter, "-af", f"volume={original_volume}", "-map", "0:v:0", "-map", "0:a:0?"]
-    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", output_path]
+    
+    # 🚀 ပိုမိုမြန်ဆန်သော Ultrafast Preset နှင့် Threads များ အသုံးပြုခြင်း
+    cmd += [
+        "-c:v", "libx264", 
+        "-preset", "ultrafast", 
+        "-crf", "26", 
+        "-threads", "0", 
+        "-c:a", "aac", 
+        "-b:a", "128k", 
+        "-movflags", "+faststart", 
+        output_path
+    ]
     try:
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=900)
         if result.returncode != 0 or not os.path.exists(output_path):
@@ -311,13 +328,15 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
         margin: 0 auto !important;
         transition: all 0.3s ease-in-out !important;
     }}
-    #{container_id} .video-container, #{container_id} video, #{container_id} .wrap {{
+    #{container_id} .video-container, #{container_id} video, #{container_id} .wrap, #{container_id} div {{
         width: 100% !important;
+        height: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
-        height: auto !important;
         max-height: none !important;
     }}
     #{container_id} video {{
+        width: 100% !important;
+        height: 100% !important;
         object-fit: cover !important;
         transform: {transform_rule} !important;
         filter: brightness({1 + brightness:.3f}) contrast({contrast:.3f}) !important;
@@ -440,7 +459,7 @@ def build_recap_prompt(selected_ratio):
 ၄။ မျက်နှာပြင်ပေါ် ဖြစ်ရပ်၊ လှုပ်ရှားမှု၊ reaction နှင့် ပြောစကားအချိန်ကို တစ်ကြောင်းချင်းစီတွင် အဓိပ္ပာယ်ပြည့်စုံစွာ ထိန်းညှိပါ။ မမြင်ရ/မကြားရသောအချက်ကို မဖန်တီးပါနှင့်။
 ၅။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များ၊ speaker label များ၊ title များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
 ၆။ TTS နှင့် မြန်မာစာတန်းထိုးအတွက် စာကြောင်းတိုတို၊ အသံထွက်လွယ်ပြီး စကားပြောသလို ရေးပါ။ စာကြောင်းတစ်ကြောင်းစီကို line break ခွဲပါ။
-၇။ အဆုံးတွင် ဇာတ်လမ်း၏ အဓိကအကျိုးဆက်/စိတ်ဝင်စားဖွယ် payoff ကို ပြတ်သားစွာပေးပြီး မလိုအပ်သော အမြင်သုံးသပ်ချက် မထည့်ပါနှင့်။ """
+၇။ အဆုံးတွင် ဇာတ်လမ်း၏ အဓိကအကျိုးဆက်/စိတ်ဝင်စားဖွယ် payoff ကို ပြတ်သားစွာပေးပြီး မလိုအပ်သော အမြင်သုံးသပ်ချက် မထည့်ပါနှင့်。 """
 
 def generate_with_retry(client, uploaded_file, prompt):
     retry_delays = [3, 7]
@@ -633,7 +652,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
                 with gr.Column(scale=1):
                     with gr.Group(elem_id="tab3_stage"):
                         t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False, 1, 0, 1) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, "#FFFFFF", 28, 82, 50))
-                        t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container")
+                        t3_preview = gr.HTML('<div style="width:100%; height:100%; background:#000; display:flex; align-items:center; justify-content:center; color:#fff;">ဗီဒီယိုဖိုင်တင်ပါ</div>', elem_id="tab3_preview_container")
                         t3_mask_dom = gr.HTML(get_tab3_overlay_html(), elem_id="tab3_mask_dom")
                     t3_output_video = gr.Video(label="✅ ထုတ်ပြီးသော Final Video")
                     t3_render_status = gr.Markdown("")
@@ -656,12 +675,12 @@ with gr.Blocks(title=APP_TITLE) as demo:
 
     # --- Tab 3 Bindings ---
     t3_file.change(
-        lambda f: (normalize_filepath(f), normalize_filepath(f)), 
+        lambda f: (update_video_preview(f), normalize_filepath(f)), 
         inputs=t3_file, 
         outputs=[t3_preview, t3_source]
     )
     t3_load_btn.click(
-        load_tab3_video, 
+        load_tab3_video_html, 
         inputs=t3_url, 
         outputs=[t3_preview, t3_source]
     )
