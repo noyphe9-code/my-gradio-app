@@ -134,28 +134,26 @@ def download_video_from_link(link):
     return None
 
 # =========================================================
-# DYNAMIC RATIO & FLIP & BLUR STYLING
+# DYNAMIC RATIO & FLIP & BLUR STYLING (FIXED VIDEO PREVIEW)
 # =========================================================
 def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False, 
                   overlay_active=False, t_y=80, t_x=10, t_w=80, t_h=15, 
                   t_color="#000000", t_opacity=0.8, t_blur=10):
     
     configs = {
-        "1:1": {"aspect": "1 / 1", "max_w": "450px"},
-        "3:4": {"aspect": "3 / 4", "max_w": "380px"},
-        "16:9": {"aspect": "16 / 9", "max_w": "640px"},
-        "9:16": {"aspect": "9 / 16", "max_w": "320px"},
+        "1:1": {"aspect": "1/1", "max_w": "450px"},
+        "3:4": {"aspect": "3/4", "max_w": "380px"},
+        "16:9": {"aspect": "16/9", "max_w": "640px"},
+        "9:16": {"aspect": "9/16", "max_w": "320px"},
     }
     cfg = configs.get(ratio, configs["1:1"])
     
-    # ဘယ်ညာလှန်ရန်အတွက် CSS Transform
     transform_rule = "scaleX(-1)" if flip_horizontal else "scaleX(1)"
     
-    # Overlay Box (စာတန်းထိုးဖုံးရန်) အတွက် CSS Code
     overlay_css = ""
     if overlay_active:
         overlay_css = f"""
-        #{container_id}::after {{
+        #{container_id}::before {{
             content: "";
             position: absolute;
             top: {t_y}%;
@@ -166,10 +164,10 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
             opacity: {t_opacity};
             backdrop-filter: blur({t_blur}px);
             -webkit-backdrop-filter: blur({t_blur}px);
-            z-index: 9999;
-            pointer-events: none; /* Mouse ဖြင့် Video Play/Pause လုပ်၍ရစေရန် */
+            z-index: 50;
+            pointer-events: none; /* Mouse ထောက်၍ရစေရန် */
             border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
             transition: all 0.2s ease;
         }}
         """
@@ -180,24 +178,21 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
         width: 100% !important;
         max-width: {cfg["max_w"]} !important;
         margin: 0 auto !important;
-        transition: all 0.3s ease-in-out !important;
         position: relative !important;
+        display: block !important;
     }}
+    #{container_id} > div,
     #{container_id} .video-container {{
-        width: 100% !important;
         aspect-ratio: {cfg["aspect"]} !important;
         height: auto !important;
         background: #000 !important;
         border-radius: 12px !important;
         overflow: hidden !important;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important;
     }}
     #{container_id} video {{
         width: 100% !important;
         height: 100% !important;
-        aspect-ratio: {cfg["aspect"]} !important;
         object-fit: cover !important;
-        display: block !important;
         transform: {transform_rule} !important;
     }}
     {overlay_css}
