@@ -9,18 +9,15 @@ import edge_tts
 import yt_dlp
 from google import genai
 
-=========================================================
-
-CONFIGURATION &SETTINGS
-
-=========================================================
+# =========================================================
+# CONFIGURATION & SETTINGS
+# =========================================================
 
 APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
-API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
-
+# API မှ တိုက်ရိုက်တောင်းဆိုထားသော နောက်ဆုံးထွက် Model များ
 GEMINI_MODELS = [
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -32,11 +29,9 @@ VOICES = {
     "Nilar (အမျိုးသမီးအသံ) - Natural": "my-MM-NilarNeural",
 }
 
-=========================================================
-
-SYSTEM HELPERS
-
-=========================================================
+# =========================================================
+# SYSTEM HELPERS
+# =========================================================
 
 def save_api_key(api_key):
     global SAVED_API_KEY
@@ -140,11 +135,9 @@ def download_video_from_link(link):
         print("Download Error:", e)
     return None
 
-=========================================================
-
-DYNAMIC RATIO, FLIP & SUBTITLE MASK STYLING
-
-=========================================================
+# =========================================================
+# DYNAMIC RATIO, FLIP & SUBTITLE MASK STYLING
+# =========================================================
 
 def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=False, mask_mode="None", mask_color="#000000", mask_opacity=0.8, mask_height=60, pos_y=90, pos_x=50, blur_val=10):
     configs = {
@@ -156,13 +149,11 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
     cfg = configs.get(ratio, configs["1:1"])
     transform_rule = "scaleX(-1)" if flip_horizontal else "scaleX(1)"
 
-    # Mask Generation CSS
     mask_css_code = ""
     if mask_mode != "None":
         if mask_mode == "Blur":
             mask_bg = f"backdrop-filter: blur({blur_val}px); -webkit-backdrop-filter: blur({blur_val}px); background: rgba(0,0,0,{mask_opacity});"
         elif mask_mode == "Solid/Color":
-            # Hex to rgba conversion helper inline
             c = mask_color.lstrip('#')
             rgb = tuple(int(c[i:i+2], 16) for i in (0, 2, 4)) if len(c) == 6 else (0, 0, 0)
             mask_bg = f"background: rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {mask_opacity});"
@@ -226,11 +217,9 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
     </div>
     """
 
-=========================================================
-
-GEMINI GENERATION
-
-=========================================================
+# =========================================================
+# GEMINI GENERATION
+# =========================================================
 
 def build_recap_prompt(selected_ratio):
     return f"""
@@ -291,11 +280,9 @@ def run_gemini_video_analysis(target_media, ratio_choice):
     clean_text = clean_script_for_tts(script_text)
     return clean_text, used_model, msg
 
-=========================================================
-
-TTS LOGIC
-
-=========================================================
+# =========================================================
+# TTS LOGIC
+# =========================================================
 
 async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="tab2_output.mp3"):
     clean_text = clean_script_for_tts(text)
@@ -308,11 +295,9 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     srt_file, zip_file = generate_srt_and_zip(clean_text, prefix=output_name.replace(".mp3", ""))
     return output_name, srt_file, zip_file
 
-=========================================================
-
-TAB CONTROLLERS
-
-=========================================================
+# =========================================================
+# TAB CONTROLLERS
+# =========================================================
 
 def tab1_analyze(v_file, v_url, ratio):
     target = v_file if v_file else download_video_from_link(v_url)
@@ -334,11 +319,9 @@ def tab2_tts(text, voice, speed):
         print("Tab 2 Error:", e)
         return None, None, None, None
 
-=========================================================
-
-GRADIO UI
-
-=========================================================
+# =========================================================
+# GRADIO UI
+# =========================================================
 
 with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}\nAI Video Recap Script & Myanmar Voice-Over")
@@ -476,8 +459,6 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     for component in [t3_ratio, t3_flip, t3_mask_mode, t3_mask_color, t3_mask_opacity, t3_mask_height, t3_pos_y, t3_pos_x, t3_blur_val]:
         component.change(update_tab3_css, inputs=[t3_ratio, t3_flip, t3_mask_mode, t3_mask_color, t3_mask_opacity, t3_mask_height, t3_pos_y, t3_pos_x, t3_blur_val], outputs=t3_css)
 
-Server Port Configuration for Render & Railway
-
-if name == "main":
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
