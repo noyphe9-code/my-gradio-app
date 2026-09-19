@@ -534,14 +534,14 @@ with gr.Blocks(title=APP_TITLE) as demo:
         with gr.TabItem("1️⃣ Video Analysis & Script", id="tab_script"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    v1_file = gr.Video(label="📹 Video File တင်ရန်", type="filepath")
+                    v1_file = gr.Video(label="📹 Video File တင်ရန်")
                     v1_url = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok, Facebook စသည်)")
                     v1_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
                     v1_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="1:1", label="📐 Preview Screen Aspect Ratio")
                     v1_gen_btn = gr.Button("🚀 Recap Script စတင်ထုတ်မည်", variant="primary")
                 with gr.Column(scale=1):
                     v1_css = gr.HTML(get_ratio_css("1:1", "tab1_preview_container", False))
-                    v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container", type="filepath")
+                    v1_preview = gr.Video(label="📺 Video Preview (Selected Ratio View)", elem_id="tab1_preview_container")
                     v1_status = gr.Markdown("ဗီဒီယိုထည့်သွင်းရန် အဆင်သင့်ဖြစ်ပါသည်။")
                     v1_script_out = gr.Textbox(label="🎬 ထွက်ရှိလာသော Script", lines=10)
                     go_to_tts_btn = gr.Button("🎙️ Tab 2 (TTS) သို့ သွားရောက် အသံထုတ်မည် ➡️", variant="secondary")
@@ -569,7 +569,7 @@ with gr.Blocks(title=APP_TITLE) as demo:
         with gr.TabItem("3️⃣ One Clip Video", id="tab_one_clip"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    t3_file = gr.Video(label="📹 Video File ထည့်ရန်", type="filepath")
+                    t3_file = gr.Video(label="📹 Video File ထည့်ရန်")
                     t3_source = gr.State(None)
                     t3_url = gr.Textbox(label="🔗 Video URL Link (YouTube, TikTok စသည်)")
                     t3_load_btn = gr.Button("🔍 Link မှ Video ရယူမည်", variant="secondary")
@@ -621,9 +621,9 @@ with gr.Blocks(title=APP_TITLE) as demo:
                 with gr.Column(scale=1):
                     with gr.Group(elem_id="tab3_stage"):
                         t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False, 1, 0, 1) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, "#FFFFFF", 28, 82, 50))
-                        t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container", type="filepath")
+                        t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container")
                         t3_mask_dom = gr.HTML(get_tab3_overlay_html(), elem_id="tab3_mask_dom")
-                    t3_output_video = gr.Video(label="✅ ထုတ်ပြီးသော Final Video", type="filepath")
+                    t3_output_video = gr.Video(label="✅ ထုတ်ပြီးသော Final Video")
                     t3_render_status = gr.Markdown("")
                     with gr.Row():
                         t3_synced_srt = gr.File(label="📄 Auto-synced SRT")
