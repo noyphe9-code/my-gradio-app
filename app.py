@@ -18,8 +18,7 @@ MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 GEMINI_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
+    "gemini-3.6-flash",
 ]
 
 VOICES = {
@@ -216,13 +215,27 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
             tts_text, selected_audio, prefix=f"tab3_burnin_{int(time.time())}"
         )
 
-    resolutions = {"480p": (854, 480), "720p": (1280, 720), "1080p": (1920, 1080)}
-    width, height = resolutions.get(output_resolution, resolutions["720p"])
+    resolution_sizes = {
+        "480p": {
+            "16:9": (854, 480), "9:16": (480, 854),
+            "3:4": (360, 480), "1:1": (480, 480),
+        },
+        "720p": {
+            "16:9": (1280, 720), "9:16": (720, 1280),
+            "3:4": (540, 720), "1:1": (720, 720),
+        },
+        "1080p": {
+            "16:9": (1920, 1080), "9:16": (1080, 1920),
+            "3:4": (810, 1080), "1:1": (1080, 1080),
+        },
+    }
+    selected_resolution = output_resolution if output_resolution in resolution_sizes else "720p"
+    selected_ratio = ratio if ratio in resolution_sizes[selected_resolution] else "16:9"
+    width, height = resolution_sizes[selected_resolution][selected_ratio]
     output_path = os.path.abspath(f"tab3_rendered_{output_resolution or '720p'}_{int(time.time())}.mp4")
     video_filter = (
-        f"scale=iw*{zoom}:ih*{zoom},crop=iw/{zoom}:ih/{zoom},"
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+        f"scale={int(width * zoom)}:{int(height * zoom)}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height}:(in_w-out_w)/2:(in_h-out_h)/2,"
         f"eq=brightness={brightness}:contrast={contrast}"
     )
     if subtitle_file and os.path.exists(subtitle_file):
