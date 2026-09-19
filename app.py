@@ -105,6 +105,32 @@ def generate_srt_and_zip(script_text, prefix="myanmar_recap"):
         zipf.write(srt_filename, arcname=srt_filename)
     return srt_filename, zip_filename
 
+def generate_synced_srt_and_zip(script_text, media_path, prefix="tab3_synced"):
+    """စာကြောင်းများကို Narrator/Audio duration အလိုက် proportionally ခွဲပြီး SRT ထုတ်သည်။"""
+    clean_text = clean_script_for_tts(script_text)
+    duration = get_video_duration(media_path) if media_path else None
+    if not clean_text or not duration or duration <= 0:
+        return generate_srt_and_zip(clean_text, prefix=prefix)
+    lines = [line.strip() for line in clean_text.splitlines() if line.strip()]
+    weights = [max(1, len(line)) for line in lines]
+    total_weight = sum(weights) or 1
+    current = 0.0
+    srt_content = []
+    for index, (line, weight) in enumerate(zip(lines, weights), 1):
+        start = current
+        end = duration if index == len(lines) else current + (duration * weight / total_weight)
+        srt_content.append(
+            f"{index}\n{seconds_to_srt_time(start)} --> {seconds_to_srt_time(end)}\n{line}\n"
+        )
+        current = end
+    srt_filename = f"{prefix}_subtitle.srt"
+    zip_filename = f"{prefix}_subtitle.zip"
+    with open(srt_filename, "w", encoding="utf-8-sig") as file:
+        file.write("\n".join(srt_content))
+    with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.write(srt_filename, arcname=srt_filename)
+    return srt_filename, zip_filename
+
 def download_video_from_link(link):
     if not link or not link.strip():
         return None
@@ -132,11 +158,13 @@ def download_video_from_link(link):
         print("Download Error:", e)
     return None
 
-def render_tab3_video(video_path, audio_mode, audio_file, original_volume, audio_volume,
-                      zoom, brightness, contrast, tts_text, tts_voice, tts_speed):
+def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
+                      original_volume, audio_volume, zoom, brightness, contrast,
+                      tts_text, tts_voice, tts_speed, output_resolution):
     """Tab 3 အတွက် အသံနှင့် video effect များကို ffmpeg ဖြင့် output video အဖြစ်ထုတ်ပေးသည်။"""
+    video_path = video_path or fallback_video_path
     if not video_path or not os.path.exists(video_path):
-        return None, "⚠️ အရင်ဆုံး Tab 3 တွင် Video File တင်ပါ။"
+        return None, "⚠️ အရင်ဆုံး Tab 3 တွင် Video File တင်ပါ။", None, None
     try:
         original_volume = max(0.0, min(2.0, float(original_volume)))
         audio_volume = max(0.0, min(2.0, float(audio_volume)))
@@ -144,7 +172,7 @@ def render_tab3_video(video_path, audio_mode, audio_file, original_volume, audio
         brightness = max(-1.0, min(1.0, float(brightness)))
         contrast = max(0.0, min(3.0, float(contrast)))
     except (TypeError, ValueError):
-        return None, "❌ Audio/Video setting တန်ဖိုး မမှန်ပါ။"
+        return None, "❌ Audio/Video setting တန်ဖိုး မမှန်ပါ။", None, None
 
     selected_audio = audio_file
     if audio_mode == "🎙️ Tab 3 Thiha/Nilar Voice":
@@ -155,17 +183,21 @@ def render_tab3_video(video_path, audio_mode, audio_file, original_volume, audio
                 generate_myanmar_tts(tts_text, tts_voice, tts_speed, tts_output)
             )
         except Exception as exc:
-            return None, f"❌ Thiha/Nilar Voice မထုတ်နိုင်ပါ: {exc}"
+            return None, f"❌ Thiha/Nilar Voice မထုတ်နိုင်ပါ: {exc}", None, None
     if audio_mode == "🎙️ Tab 2 Voice (tab2_output.mp3)" and not selected_audio:
         selected_audio = "tab2_output.mp3"
     if audio_mode == "🎵 MP3 BGM" and not selected_audio:
-        return None, "⚠️ MP3 BGM ဖိုင်တင်ပေးပါ။"
+        return None, "⚠️ MP3 BGM ဖိုင်တင်ပေးပါ။", None, None
     if selected_audio and not os.path.exists(selected_audio):
-        return None, "⚠️ ရွေးထားသော Audio ဖိုင်ကို မတွေ့ပါ။"
+        return None, "⚠️ ရွေးထားသော Audio ဖိုင်ကို မတွေ့ပါ။", None, None
 
-    output_path = os.path.abspath(f"tab3_rendered_{int(time.time())}.mp4")
+    resolutions = {"480p": (854, 480), "720p": (1280, 720), "1080p": (1920, 1080)}
+    width, height = resolutions.get(output_resolution, resolutions["720p"])
+    output_path = os.path.abspath(f"tab3_rendered_{output_resolution or '720p'}_{int(time.time())}.mp4")
     video_filter = (
         f"scale=iw*{zoom}:ih*{zoom},crop=iw/{zoom}:ih/{zoom},"
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
         f"eq=brightness={brightness}:contrast={contrast}"
     )
     cmd = ["ffmpeg", "-y", "-i", video_path]
@@ -179,10 +211,11 @@ def render_tab3_video(video_path, audio_mode, audio_file, original_volume, audio
     ):
         cmd += ["-stream_loop", "-1", "-i", selected_audio]
         if mix_with_original:
+            mix_duration = "shortest" if "Narrator" in audio_mode else "first"
             cmd += [
                 "-filter_complex",
                 f"[0:v]{video_filter}[v];[0:a]volume={original_volume}[orig];"
-                f"[1:a]volume={audio_volume}[extra];[orig][extra]amix=inputs=2:duration=first:dropout_transition=2[a]"
+                f"[1:a]volume={audio_volume}[extra];[orig][extra]amix=inputs=2:duration={mix_duration}:dropout_transition=2[a]"
             ]
         else:
             cmd += ["-filter_complex", f"[0:v]{video_filter}[v];[1:a]volume={audio_volume}[a]"]
@@ -195,12 +228,15 @@ def render_tab3_video(video_path, audio_mode, audio_file, original_volume, audio
     try:
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=900)
         if result.returncode != 0 or not os.path.exists(output_path):
-            return None, f"❌ Video Render မအောင်မြင်ပါ။\n{result.stderr[-800:]}"
-        return output_path, "✅ Tab 3 Video ကို အသံနှင့် Effect များပါအောင် ထုတ်ပြီးပါပြီ။"
+            return None, f"❌ Video Render မအောင်မြင်ပါ။\n{result.stderr[-800:]}", None, None
+        synced_srt, synced_zip = generate_synced_srt_and_zip(
+            tts_text, output_path, prefix=f"tab3_synced_{int(time.time())}"
+        )
+        return output_path, f"✅ {output_resolution} Video ကို Auto-sync/Auto-trim ဖြင့် ထုတ်ပြီးပါပြီ။", synced_srt, synced_zip
     except subprocess.TimeoutExpired:
-        return None, "❌ Video Render အချိန်ကြာလွန်းသဖြင့် ရပ်လိုက်ပါသည်။"
+        return None, "❌ Video Render အချိန်ကြာလွန်းသဖြင့် ရပ်လိုက်ပါသည်။", None, None
     except Exception as exc:
-        return None, f"❌ Render Error: {exc}"
+        return None, f"❌ Render Error: {exc}", None, None
 
 def load_tab3_video(link):
     path = download_video_from_link(link)
@@ -297,6 +333,10 @@ def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_
     #tab3_stage #tab3_preview_container {{
         position: relative !important;
         z-index: 1 !important;
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        overflow: hidden !important;
     }}
     #tab3_stage #tab3_mask_dom {{
         position: absolute !important;
@@ -444,7 +484,7 @@ def tab2_tts(text, voice, speed):
 # =========================================================
 # GRADIO UI
 # =========================================================
-with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title=APP_TITLE) as demo:
     gr.Markdown(f"# 🎬 {APP_TITLE}\n**AI Video Recap Script & Myanmar Voice-Over**")
     
     with gr.Tabs() as main_tabs:
@@ -533,6 +573,7 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_zoom = gr.Slider(1, 2, value=1, step=0.05, label="🔍 Video Zoom")
                     t3_brightness = gr.Slider(-1, 1, value=0, step=0.05, label="☀️ အလင်း/အမှောင်")
                     t3_contrast = gr.Slider(0, 3, value=1, step=0.05, label="◐ Contrast")
+                    t3_resolution = gr.Dropdown(["480p", "720p", "1080p"], value="720p", label="📺 Output Resolution")
                     t3_render_btn = gr.Button("🎬 Tab 3 Final Video ထုတ်မည်", variant="primary")
                     gr.Markdown("### 🔤 Preview စာတန်းထိုး အလှဆင်ခြင်း")
                     t3_subtitle_text = gr.Textbox(value="(နမူနာစာ)", label="📝 Preview မှာပြမည့် စာတန်းထိုးစာ", lines=2)
@@ -550,6 +591,9 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                         t3_mask_dom = gr.HTML(get_tab3_overlay_html(), elem_id="tab3_mask_dom")
                     t3_output_video = gr.Video(label="✅ ထုတ်ပြီးသော Final Video")
                     t3_render_status = gr.Markdown("")
+                    with gr.Row():
+                        t3_synced_srt = gr.File(label="📄 Auto-synced SRT")
+                        t3_synced_zip = gr.File(label="📦 Auto-synced SRT ZIP")
                     gr.Markdown("💡 *အထက်ပါ Preview ပေါ်တွင် မူရင်းစာတန်းထိုးများကို ဖုံးကွယ်ရန် ချိန်ကိုက်ထားသော Mask ကို ဗီဒီယိုပေါ်တွင် တိုက်ရိုက်ထပ်နေအောင် စီစဉ်ပေးထားပါသည်။*")
 
     # ================= EVENT BINDINGS =================
@@ -569,10 +613,10 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     t3_load_btn.click(load_tab3_video, inputs=t3_url, outputs=[t3_preview, t3_source])
     t3_render_btn.click(
         render_tab3_video,
-        inputs=[t3_source, t3_audio_mode, t3_audio_file, t3_original_volume,
+        inputs=[t3_source, t3_file, t3_audio_mode, t3_audio_file, t3_original_volume,
                 t3_audio_volume, t3_zoom, t3_brightness, t3_contrast,
-                t3_tts_text, t3_tts_voice, t3_tts_speed],
-        outputs=[t3_output_video, t3_render_status]
+                t3_tts_text, t3_tts_voice, t3_tts_speed, t3_resolution],
+        outputs=[t3_output_video, t3_render_status, t3_synced_srt, t3_synced_zip]
     )
     
     def update_tab3_styling(ratio, flip, mask_en, mask_t, col, op, blur, py, px, h,
@@ -602,4 +646,4 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
 # Server Port Configuration for Render & Railway
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    demo.launch(server_name="0.0.0.0", server_port=port, theme=gr.themes.Soft())
