@@ -165,34 +165,58 @@ def get_ratio_css(ratio, container_id="tab1_preview_container", flip_horizontal=
     """
 
 def hex_to_rgba(hex_color, opacity):
-    hex_color = hex_color.lstrip('#')
+    hex_color = (hex_color or '#000000').strip().lstrip('#')
     if len(hex_color) == 3:
         hex_color = ''.join([c*2 for c in hex_color])
     try:
         r = int(hex_color[0:2], 16)
         g = int(hex_color[2:4], 16)
         b = int(hex_color[4:6], 16)
-    except:
+    except (TypeError, ValueError):
         r, g, b = 0, 0, 0
-    return f"rgba({r}, {g}, {b}, {opacity})"
+    try:
+        opacity = max(0.0, min(1.0, float(opacity)))
+    except (TypeError, ValueError):
+        opacity = 0.6
+    return f"rgba({r}, {g}, {b}, {opacity:.3f})"
 
 def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_y, pos_x, height_pct):
     mask_display = "block" if mask_enabled else "none"
-    if "Blur" in mask_type:
-        rgba_bg = hex_to_rgba(color, opacity)
-        background_style = f"background-color: {rgba_bg};"
-        backdrop_filter_style = f"backdrop-filter: blur({blur_amount}px); -webkit-backdrop-filter: blur({blur_amount}px);"
-    else:
-        rgba_bg = hex_to_rgba(color, opacity)
-        background_style = f"background-color: {rgba_bg};"
-        backdrop_filter_style = ""
+    mask_type = mask_type or ""
+    rgba_bg = hex_to_rgba(color, opacity)
+    background_style = f"background-color: {rgba_bg};"
+    try:
+        blur_amount = max(0, min(30, float(blur_amount)))
+        pos_y = max(0, min(100, float(pos_y)))
+        pos_x = max(0, min(100, float(pos_x)))
+        height_pct = max(5, min(50, float(height_pct)))
+    except (TypeError, ValueError):
+        blur_amount, pos_y, pos_x, height_pct = 10, 85, 50, 12
+    backdrop_filter_style = (
+        f"backdrop-filter: blur({blur_amount}px); "
+        f"-webkit-backdrop-filter: blur({blur_amount}px);"
+        if "Blur" in mask_type else ""
+    )
 
     return f"""
     <style>
-    #tab3_preview_container {{
+    #tab3_stage {{
         position: relative !important;
+        overflow: hidden !important;
     }}
-    #tab3_custom_mask {{
+    #tab3_stage #tab3_preview_container {{
+        position: relative !important;
+        z-index: 1 !important;
+    }}
+    #tab3_stage #tab3_mask_dom {{
+        position: absolute !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        z-index: 20 !important;
+        pointer-events: none !important;
+    }}
+    #tab3_stage #tab3_custom_mask {{
         display: {mask_display} !important;
         position: absolute !important;
         left: {pos_x}% !important;
@@ -203,7 +227,7 @@ def get_tab3_mask_css(mask_enabled, mask_type, color, opacity, blur_amount, pos_
         border-radius: 8px !important;
         {background_style}
         {backdrop_filter_style}
-        z-index: 1000 !important;
+        z-index: 21 !important;
         pointer-events: none !important;
         border: 1px dashed rgba(255, 255, 255, 0.4);
     }}
@@ -379,9 +403,10 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_height = gr.Slider(5, 50, value=12, step=1, label="📏 အထူအပါး အမြင့် (Height Size %)")
 
                 with gr.Column(scale=1):
-                    t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12))
-                    t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container")
-                    t3_mask_dom = gr.HTML('<div id="tab3_custom_mask"></div>')
+                    with gr.Group(elem_id="tab3_stage"):
+                        t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12))
+                        t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container")
+                        t3_mask_dom = gr.HTML('<div id="tab3_custom_mask"></div>', elem_id="tab3_mask_dom")
                     gr.Markdown("💡 *အထက်ပါ Preview ပေါ်တွင် မူရင်းစာတန်းထိုးများကို ဖုံးကွယ်ရန် ချိန်ကိုက်ထားသော Mask ကို ဗီဒီယိုပေါ်တွင် တိုက်ရိုက်ထပ်နေအောင် စီစဉ်ပေးထားပါသည်။*")
 
     # ================= EVENT BINDINGS =================
