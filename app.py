@@ -132,6 +132,64 @@ def download_video_from_link(link):
         print("Download Error:", e)
     return None
 
+def render_tab3_video(video_path, audio_mode, audio_file, original_volume, audio_volume,
+                      zoom, brightness, contrast, tts_text, tts_voice, tts_speed):
+    """Tab 3 အတွက် အသံနှင့် video effect များကို ffmpeg ဖြင့် output video အဖြစ်ထုတ်ပေးသည်။"""
+    if not video_path or not os.path.exists(video_path):
+        return None, "⚠️ အရင်ဆုံး Tab 3 တွင် Video File တင်ပါ။"
+    try:
+        original_volume = max(0.0, min(2.0, float(original_volume)))
+        audio_volume = max(0.0, min(2.0, float(audio_volume)))
+        zoom = max(1.0, min(2.0, float(zoom)))
+        brightness = max(-1.0, min(1.0, float(brightness)))
+        contrast = max(0.0, min(3.0, float(contrast)))
+    except (TypeError, ValueError):
+        return None, "❌ Audio/Video setting တန်ဖိုး မမှန်ပါ။"
+
+    selected_audio = audio_file
+    if audio_mode == "🎙️ Tab 3 Thiha/Nilar Voice":
+        tts_text = clean_script_for_tts(tts_text) or "(နမူနာစာ)"
+        tts_output = os.path.abspath(f"tab3_tts_{int(time.time())}.mp3")
+        try:
+            selected_audio, _, _ = asyncio.run(
+                generate_myanmar_tts(tts_text, tts_voice, tts_speed, tts_output)
+            )
+        except Exception as exc:
+            return None, f"❌ Thiha/Nilar Voice မထုတ်နိုင်ပါ: {exc}"
+    if audio_mode == "🎙️ Tab 2 Voice (tab2_output.mp3)" and not selected_audio:
+        selected_audio = "tab2_output.mp3"
+    if audio_mode == "🎵 MP3 BGM" and not selected_audio:
+        return None, "⚠️ MP3 BGM ဖိုင်တင်ပေးပါ။"
+    if selected_audio and not os.path.exists(selected_audio):
+        return None, "⚠️ ရွေးထားသော Audio ဖိုင်ကို မတွေ့ပါ။"
+
+    output_path = os.path.abspath(f"tab3_rendered_{int(time.time())}.mp4")
+    video_filter = (
+        f"scale=iw*{zoom}:ih*{zoom},crop=iw/{zoom}:ih/{zoom},"
+        f"eq=brightness={brightness}:contrast={contrast}"
+    )
+    cmd = ["ffmpeg", "-y", "-i", video_path]
+    if selected_audio and audio_mode in (
+        "🎵 MP3 BGM", "🎙️ Tab 2 Voice (tab2_output.mp3)", "🎙️ Tab 3 Thiha/Nilar Voice"
+    ):
+        cmd += ["-stream_loop", "-1", "-i", selected_audio]
+        cmd += ["-filter_complex", f"[0:v]{video_filter}[v];[1:a]volume={audio_volume}[a]"]
+        cmd += ["-map", "[v]", "-map", "[a]", "-shortest"]
+    elif audio_mode == "🔇 Original Video အသံပိတ်မည်":
+        cmd += ["-vf", video_filter, "-an"]
+    else:
+        cmd += ["-vf", video_filter, "-af", f"volume={original_volume}", "-map", "0:v:0", "-map", "0:a:0?"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", output_path]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=900)
+        if result.returncode != 0 or not os.path.exists(output_path):
+            return None, f"❌ Video Render မအောင်မြင်ပါ။\n{result.stderr[-800:]}"
+        return output_path, "✅ Tab 3 Video ကို အသံနှင့် Effect များပါအောင် ထုတ်ပြီးပါပြီ။"
+    except subprocess.TimeoutExpired:
+        return None, "❌ Video Render အချိန်ကြာလွန်းသဖြင့် ရပ်လိုက်ပါသည်။"
+    except Exception as exc:
+        return None, f"❌ Render Error: {exc}"
+
 # =========================================================
 # DYNAMIC RATIO & STYLING (TAB 1 & TAB 3)
 # =========================================================
@@ -430,6 +488,21 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     t3_pos_y = gr.Slider(0, 100, value=85, step=1, label="↕️ အပေါ်အောက် နေရာရွေ့ရန် (Top Position %)")
                     t3_pos_x = gr.Slider(0, 100, value=50, step=1, label="↔️ ဘယ်ညာ နေရာရွေ့ရန် (Left Position %)")
                     t3_height = gr.Slider(5, 50, value=12, step=1, label="📏 အထူအပါး အမြင့် (Height Size %)")
+                    gr.Markdown("### 🔊 အသံနှင့် Video Effect Settings")
+                    t3_audio_mode = gr.Dropdown(
+                        ["🔊 Original Video အသံ", "🔇 Original Video အသံပိတ်မည်", "🎵 MP3 BGM", "🎙️ Tab 2 Voice (tab2_output.mp3)", "🎙️ Tab 3 Thiha/Nilar Voice"],
+                        value="🔊 Original Video အသံ", label="အသံရွေးချယ်ရန်"
+                    )
+                    t3_audio_file = gr.Audio(type="filepath", label="🎵 MP3 BGM / Voice ဖိုင်တင်ရန်")
+                    t3_tts_text = gr.Textbox(value="(နမူနာစာ)", label="🎙️ Tab 3 Voice ဖတ်မည့်စာ", lines=2)
+                    t3_tts_voice = gr.Dropdown(list(VOICES.keys()), value="Thiha (အမျိုးသားအသံ) - Natural", label="🎤 Thiha / Nilar ရွေးရန်")
+                    t3_tts_speed = gr.Slider(-30, 50, value=5, step=1, label="⚡ အသံ အနှေး/အမြန် (%)")
+                    t3_original_volume = gr.Slider(0, 2, value=1, step=0.05, label="🔊 မူရင်း Video အသံတိုး/လျော့")
+                    t3_audio_volume = gr.Slider(0, 2, value=0.35, step=0.05, label="🎵 MP3 / Voice အသံတိုး/လျော့")
+                    t3_zoom = gr.Slider(1, 2, value=1, step=0.05, label="🔍 Video Zoom")
+                    t3_brightness = gr.Slider(-1, 1, value=0, step=0.05, label="☀️ အလင်း/အမှောင်")
+                    t3_contrast = gr.Slider(0, 3, value=1, step=0.05, label="◐ Contrast")
+                    t3_render_btn = gr.Button("🎬 Tab 3 Final Video ထုတ်မည်", variant="primary")
                     gr.Markdown("### 🔤 Preview စာတန်းထိုး အလှဆင်ခြင်း")
                     t3_subtitle_text = gr.Textbox(value="(နမူနာစာ)", label="📝 Preview မှာပြမည့် စာတန်းထိုးစာ", lines=2)
                     with gr.Row():
@@ -443,7 +516,9 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
                     with gr.Group(elem_id="tab3_stage"):
                         t3_css = gr.HTML(get_ratio_css("9:16", "tab3_preview_container", False) + get_tab3_mask_css(True, "Blur (နောက်ခံဝဲဝါးရန်)", "#000000", 0.6, 10, 85, 50, 12, "#FFFFFF", 28, 82, 50))
                         t3_preview = gr.Video(label="📺 Video Preview (With Subtitle Mask)", elem_id="tab3_preview_container")
-                        t3_mask_dom = gr.HTML(get_tab3_overlay_html(), elem_id="tab3_mask_dom")
+                    t3_mask_dom = gr.HTML(get_tab3_overlay_html(), elem_id="tab3_mask_dom")
+                    t3_output_video = gr.Video(label="✅ ထုတ်ပြီးသော Final Video")
+                    t3_render_status = gr.Markdown("")
                     gr.Markdown("💡 *အထက်ပါ Preview ပေါ်တွင် မူရင်းစာတန်းထိုးများကို ဖုံးကွယ်ရန် ချိန်ကိုက်ထားသော Mask ကို ဗီဒီယိုပေါ်တွင် တိုက်ရိုက်ထပ်နေအောင် စီစဉ်ပေးထားပါသည်။*")
 
     # ================= EVENT BINDINGS =================
@@ -461,6 +536,13 @@ with gr.Blocks(title=APP_TITLE, theme=gr.themes.Soft()) as demo:
     # --- Tab 3 Bindings ---
     t3_file.change(lambda f: f, inputs=t3_file, outputs=t3_preview)
     t3_load_btn.click(download_video_from_link, inputs=t3_url, outputs=t3_preview)
+    t3_render_btn.click(
+        render_tab3_video,
+        inputs=[t3_file, t3_audio_mode, t3_audio_file, t3_original_volume,
+                t3_audio_volume, t3_zoom, t3_brightness, t3_contrast,
+                t3_tts_text, t3_tts_voice, t3_tts_speed],
+        outputs=[t3_output_video, t3_render_status]
+    )
     
     def update_tab3_styling(ratio, flip, mask_en, mask_t, col, op, blur, py, px, h,
                             subtitle_text, subtitle_color, subtitle_size, subtitle_y, subtitle_x):
