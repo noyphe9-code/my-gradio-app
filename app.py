@@ -15,6 +15,7 @@ from google import genai
 # =========================================================
 APP_TITLE = "AI Movie Recap Studio Pro"
 MAX_VIDEO_MINUTES = 10
+MAX_AI_UPLOAD_MB = 80
 SAVED_API_KEY = ""
 
 GEMINI_MODELS = [
@@ -76,6 +77,30 @@ def validate_video_duration(video_path):
     if minutes > MAX_VIDEO_MINUTES:
         return False, f"⚠️ Video သည် {minutes:.1f} မိနစ်ရှိပါသည်။ အများဆုံး {MAX_VIDEO_MINUTES} မိနစ်အထိသာ လက်ခံပါသည်။"
     return True, f"✅ Video Length: {minutes:.1f} မိနစ်"
+
+def prepare_video_for_ai(video_path):
+    """AI upload အတွက် ဖိုင်ကြီးများကို 720p proxy အဖြစ် ချုံ့ပေးသည်။"""
+    if not video_path or not os.path.exists(video_path):
+        return video_path
+    try:
+        size_mb = os.path.getsize(video_path) / (1024 * 1024)
+        if size_mb <= MAX_AI_UPLOAD_MB:
+            return video_path
+        proxy_path = os.path.abspath(
+            f"ai_proxy_{os.path.splitext(os.path.basename(video_path))[0]}.mp4"
+        )
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", video_path,
+             "-vf", "scale='min(1280,iw)':-2:force_original_aspect_ratio=decrease",
+             "-r", "24", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+             "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", proxy_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=900
+        )
+        if result.returncode == 0 and os.path.exists(proxy_path):
+            return proxy_path
+    except Exception as exc:
+        print("AI Proxy Error:", exc)
+    return video_path
 
 def clean_script_for_tts(script_text):
     if not script_text:
@@ -490,7 +515,9 @@ def run_gemini_video_analysis(target_media, ratio_choice):
         raise ValueError(msg)
     
     client = genai.Client(api_key=SAVED_API_KEY)
-    uploaded_file = client.files.upload(file=target_media)
+    # Upload a smaller proxy for large files so Gemini processing starts faster.
+    ai_media = prepare_video_for_ai(target_media)
+    uploaded_file = client.files.upload(file=ai_media)
     
     start_wait = time.time()
     while True:
