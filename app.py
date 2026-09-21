@@ -18,10 +18,10 @@ MAX_VIDEO_MINUTES = 10
 SAVED_API_KEY = ""
 
 GEMINI_MODELS = [
-    # Use models available in the Gemini API. Change these only to models
-    # enabled for your API project.
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
+    # The API error says 2.5-flash-lite is unavailable to new users.
+    # Use the current model recommended by the API response first.
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
 ]
 
 VOICES = {
