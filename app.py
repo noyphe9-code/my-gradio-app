@@ -113,9 +113,18 @@ def clean_script_for_tts(script_text):
         line = line.replace("**", "").replace("__", "").replace("`", "")
         line = re.sub(r"^\s*\[(?:Visual|Scene|Video|Audio|Camera|Action|Narration|Narrator|Dialogue|Intro)\]\s*[:\-]?\s*", "", line, flags=re.IGNORECASE)
         line = re.sub(r"^\s*Narrator\s*:\s*", "", line, flags=re.IGNORECASE)
+        line = re.sub(
+            r"^\s*(?:ဇာတ်ကြောင်း|ဇာတ်ကောင်စကားပြော|တုံ့ပြန်မှု|နိဒါန်း|အဆုံးသတ်|ဇာတ်လမ်း|Narration|Dialogue|Reaction)\s*[:：\-]?\s*",
+            "", line, flags=re.IGNORECASE
+        )
+        # Remove a leading speaker label such as “Name:” while keeping the
+        # spoken sentence itself. This is intentionally limited to short
+        # labels so normal Burmese punctuation is not disturbed.
+        line = re.sub(r"^\s*[A-Za-z0-9\u1000-\u109F][A-Za-z0-9\u1000-\u109F .'-]{0,28}\s*[:：]\s*", "", line)
         if line.lower() in ["movie recap", "recap script", "burmese recap script", "script"] or line.startswith("---"):
             continue
-        cleaned.append(line.strip())
+        if line.strip():
+            cleaned.append(line.strip())
     return "\n".join(cleaned)
 
 def seconds_to_srt_time(seconds):
@@ -307,8 +316,10 @@ def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
         else:
             cmd += ["-vf", video_filter, "-an", "-map", "0:v:0"]
     # CFR + yuv420p prevents jerky playback across mobile/social players.
-    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-r", "30", "-fps_mode", "cfr", "-pix_fmt", "yuv420p",
+    # Fast preset and automatic threading keep the Gradio request from
+    # blocking for many minutes on CPU-only servers.
+    cmd += ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "fastdecode",
+            "-crf", "27", "-threads", "0", "-r", "30", "-fps_mode", "cfr", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-ar", "48000", "-b:a", "192k",
             "-movflags", "+faststart", output_path]
     try:
@@ -476,15 +487,19 @@ def get_tab3_overlay_html(sample_text="(နမူနာစာ)"):
 # GEMINI GENERATION
 # =========================================================
 def build_recap_prompt(selected_ratio):
-    return f""" သင်သည် TikTok နှင့် Facebook အတွက် retention မြင့်သော Professional Movie Recap Scriptwriter ဖြစ်သည်။ Target Video Frame Ratio: {selected_ratio} ပေးထားသော ဗီဒီယိုကို အစမှအဆုံးအထိ တိကျသေချာစွာ ကြည့်ရှုနားထောင်ပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း "မြန်မာ Movie Recap Script" ကို ရေးသားပေးပါ-
-[စည်းမျဉ်းများ]
-၁။ ပထမ ၁-၂ စာကြောင်းတွင် အံ့အားသင့်စရာ Hook ထည့်ပြီး ကြည့်ရှုသူ ဆက်ကြည့်ချင်အောင် ရေးပါ။ Clickbait အလွန်အကျွံမလုပ်ဘဲ ဗီဒီယိုအတွင်း အမှန်တကယ်ဖြစ်ရပ်ကိုသာ အသုံးပြုပါ။
-၂။ ဇာတ်လမ်းကို အစမှအဆုံး အချိန်အစဉ်လိုက်၊ မြန်မြန်ဆန်ဆန်နှင့် suspense ရှိအောင် ပြောပါ။ အဖြစ်အပျက်တိုင်းကို မလိုအပ်ဘဲရှည်မရေးပါနှင့်။
-၃။ Narrator ရှင်းပြချက်များနှင့် ဇာတ်ကောင်များ၏ အပြန်အလှန်ပြောစကားများကို သဘာဝကျကျ ရောစပ်ပါ။ ဇာတ်ကောင်ပြောစကားကို မြန်မာစကားပြောအဖြစ် တိုက်ရိုက်ရေးပြီး quotation mark သုံးနိုင်သည်။
-၄။ မျက်နှာပြင်ပေါ် ဖြစ်ရပ်၊ လှုပ်ရှားမှု၊ reaction နှင့် ပြောစကားအချိန်ကို တစ်ကြောင်းချင်းစီတွင် အဓိပ္ပာယ်ပြည့်စုံစွာ ထိန်းညှိပါ။ မမြင်ရ/မကြားရသောအချက်ကို မဖန်တီးပါနှင့်။
-၅။ [Visual], [Scene], [Narrator], [Dialogue], [Intro] စသည့် Technical Label များ၊ speaker label များ၊ title များနှင့် စကားအပိုများ လုံးဝမထည့်ပါနှင့်။
-၆။ TTS နှင့် မြန်မာစာတန်းထိုးအတွက် စာကြောင်းတိုတို၊ အသံထွက်လွယ်ပြီး စကားပြောသလို ရေးပါ။ စာကြောင်းတစ်ကြောင်းစီကို line break ခွဲပါ။
-၇။ အဆုံးတွင် ဇာတ်လမ်း၏ အဓိကအကျိုးဆက်/စိတ်ဝင်စားဖွယ် payoff ကို ပြတ်သားစွာပေးပြီး မလိုအပ်သော အမြင်သုံးသပ်ချက် မထည့်ပါနှင့်။ """
+    return f"""သင်သည် TikTok, YouTube နှင့် Facebook အတွက် watch-time မြင့်သော Professional Burmese Movie Recap Narrator ဖြစ်သည်။ Target Video Frame Ratio: {selected_ratio}။ ပေးထားသောဗီဒီယိုကို အစမှအဆုံး တိကျစွာကြည့်ရှုပြီး အောက်ပါစည်းမျဉ်းများအတိုင်း မြန်မာဘာသာဖြင့် voice-over script တစ်ခုရေးပါ။
+
+အရေးကြီးဆုံး Output စည်းမျဉ်းများ
+၁။ Output တွင် script စာကြောင်းများသာ ပါရမည်။ ခေါင်းစဉ်၊ အဖွင့်အမှာစာ၊ အဆုံးသတ်မှတ်ချက်၊ Markdown၊ bullet၊ နံပါတ်စဉ် မထည့်ပါနှင့်။
+၂။ “ဇာတ်ကြောင်း”, “ဇာတ်ကောင်စကားပြော”, “တုံ့ပြန်မှု”, “နိဒါန်း”, “အဆုံးသတ်” စသည့် ခေါင်းစဉ်စာသားများကို လုံးဝမရေးပါနှင့်။
+၃။ ဇာတ်ကောင်အမည်ကို စာကြောင်းရှေ့တွင် မတပ်ပါနှင့်။ “မောင်မောင်:”, “သူမ:”, “Narrator:”၊ “Character:” စသည့် speaker label များကို လုံးဝမသုံးပါနှင့်။ စကားပြောချက်ရှိလျှင် သဘာဝကျသော မြန်မာစကားပြောပုံစံဖြင့် ဇာတ်ကြောင်းထဲ တိုက်ရိုက်ရောစပ်ရေးပါ။
+၄။ ပထမ ၁–၂ စာကြောင်းတွင် အံ့အားသင့်စရာ hook ထည့်ပြီး scroll လုပ်မသွားအောင် ဆွဲဆောင်ပါ။ Clickbait မလုပ်ဘဲ ဗီဒီယိုထဲတွင် အမှန်တကယ်မြင်ရ/ကြားရသောအချက်ကိုသာ အသုံးပြုပါ။
+၅။ ဇာတ်လမ်းကို အစမှအဆုံး အချိန်စဉ်အတိုင်း မြန်မြန်ဆန်ဆန်၊ suspense ရှိရှိ၊ လူနားထောင်ရလွယ်အောင် ရေးပါ။ အဖြစ်အပျက်များကြားတွင် “ဒါပေမယ့်”, “အဲဒီအချိန်မှာ”, “မကြာခင်မှာ” စသည့် သဘာဝချိတ်ဆက်စကားများကို လိုအပ်သလိုသုံးပါ။
+၆။ Narrator ရှင်းပြချက်နှင့် ဇာတ်ကောင်စကားများကို label မပါဘဲ သဘာဝကျကျ ရောစပ်ပါ။ စာကြောင်းတိုတို၊ TTS ဖတ်ရလွယ်ပြီး စာတန်းထိုးအဖြစ်လည်း ဖတ်ရလွယ်အောင် line break ခွဲပါ။
+၇။ မမြင်ရ၊ မကြားရသောအချက်ကို မဖန်တီးပါနှင့်။ မျက်နှာပြင်ပေါ် ဖြစ်ရပ်၊ လှုပ်ရှားမှု၊ မျက်နှာအမူအရာနှင့် reaction ကိုသာ အဓိပ္ပာယ်ရှိရှိ ဖော်ပြပါ။
+၈။ အဆုံးတွင် အဓိကအကျိုးဆက် သို့မဟုတ် စိတ်ဝင်စားဖွယ် payoff ကို ပြတ်သားစွာပေးပါ။ ကိုယ်ပိုင်သုံးသပ်ချက်၊ subscribe တောင်းဆိုချက်၊ “ဒီနေ့တော့...” စသည့် အပိုစာသားများ မထည့်ပါနှင့်။
+
+နောက်ဆုံးစစ်ဆေးရန်: Output ထဲတွင် “ဇာတ်ကြောင်း”, “ဇာတ်ကောင်စကားပြော”, “တုံ့ပြန်မှု”၊ ဇာတ်ကောင်အမည်ရှေ့က colon၊ speaker label၊ ခေါင်းစဉ် တစ်ခုမျှ မပါရ။"""
 
 def generate_with_retry(client, uploaded_file, prompt):
     retry_delays = [3, 7]
@@ -549,6 +564,37 @@ async def generate_myanmar_tts(text, voice_choice, speed_percent, output_name="t
     srt_file, zip_file = generate_srt_and_zip(clean_text, prefix=output_name.replace(".mp3", ""))
     return output_name, srt_file, zip_file
 
+def translate_to_myanmar(source_text, source_language):
+    """English/Chinese/Thai စာကို TTS-ready မြန်မာစကားပြောပုံစံသို့ ဘာသာပြန်သည်။"""
+    global SAVED_API_KEY
+    if not source_text or not source_text.strip():
+        raise ValueError("ဘာသာပြန်မည့် စာသား ထည့်ပေးပါ။")
+    if not SAVED_API_KEY:
+        raise ValueError("Gemini API Key မရှိသေးပါ။ API Key Setting တွင် အရင်သိမ်းပါ။")
+    language = source_language or "Auto Detect"
+    prompt = f"""
+Translate the following {language} text into natural spoken Burmese (Myanmar).
+Rules:
+1. Preserve the original meaning, names, numbers, emotion, and paragraph/line breaks.
+2. Do not add explanations, headings, speaker labels, or translator notes.
+3. Use short, clear Burmese sentences suitable for Myanmar TTS narration and subtitles.
+4. If the input is already Burmese, polish it naturally without changing its meaning.
+5. Return only the Burmese translation.
+
+SOURCE TEXT:
+{source_text.strip()}
+"""
+    client = genai.Client(api_key=SAVED_API_KEY)
+    last_error = None
+    for model_name in GEMINI_MODELS:
+        try:
+            response = client.models.generate_content(model=model_name, contents=prompt)
+            if response and response.text:
+                return clean_script_for_tts(response.text), model_name
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"Translation failed. Last error: {last_error}")
+
 # =========================================================
 # TAB CONTROLLERS
 # =========================================================
@@ -571,6 +617,13 @@ def tab2_tts(text, voice, speed):
     except Exception as e:
         print("Tab 2 Error:", e)
         return None, None, None, None
+
+def tab2_translate(text, language):
+    try:
+        translated, model = translate_to_myanmar(text, language)
+        return translated, f"✅ {language} → မြန်မာ ဘာသာပြန်ပြီးပါပြီ။ (Model: {model})"
+    except Exception as exc:
+        return "", f"❌ Translation Error: {exc}"
 
 # =========================================================
 # GRADIO UI
@@ -608,6 +661,22 @@ with gr.Blocks(title=APP_TITLE) as demo:
 
         # --- TAB 2: TTS ---
         with gr.TabItem("2️⃣ Text-to-Speech", id="tab_tts"):
+            gr.Markdown("### 🌐 English / Chinese / Thai → မြန်မာ ဘာသာပြန်ခြင်း")
+            with gr.Row():
+                v2_source_text = gr.Textbox(
+                    label="📥 ဘာသာပြန်မည့် စာသား",
+                    placeholder="English, 中文, ไทย စာသားကို ဒီမှာထည့်ပါ...",
+                    lines=8,
+                    scale=3,
+                )
+                v2_source_language = gr.Dropdown(
+                    ["Auto Detect", "English", "Chinese", "Thai"],
+                    value="Auto Detect",
+                    label="မူရင်းဘာသာစကား",
+                    scale=1,
+                )
+            v2_translate_btn = gr.Button("🌐 မြန်မာလို ဘာသာပြန်မည်", variant="secondary")
+            v2_translate_status = gr.Markdown("")
             with gr.Row():
                 with gr.Column(scale=1):
                     v2_input_text = gr.Textbox(label="🎙️ Burmese Script (Tab 1 မှ အလိုအလျောက် ရောက်ရှိပါမည်)", lines=12)
@@ -620,6 +689,11 @@ with gr.Blocks(title=APP_TITLE) as demo:
             with gr.Row():
                 v2_srt = gr.File(label="📄 SRT")
                 v2_zip = gr.File(label="📦 SRT ZIP")
+            v2_translate_btn.click(
+                tab2_translate,
+                inputs=[v2_source_text, v2_source_language],
+                outputs=[v2_input_text, v2_translate_status],
+            )
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
 
         # --- TAB 3: ONE CLIP VIDEO (Using gr.Video with absolute mask overlay) ---
