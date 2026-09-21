@@ -5,10 +5,12 @@ import zipfile
 import subprocess
 import asyncio
 import html
+import json
 import gradio as gr
 import edge_tts
 import yt_dlp
 from google import genai
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageOps, ImageFilter, ImageStat
 
 # =========================================================
 # CONFIGURATION & SETTINGS
@@ -207,6 +209,154 @@ def download_video_from_link(link):
     except Exception as e:
         print("Download Error:", e)
     return None
+
+def thumbnail_metadata(text):
+    """Thumbnail title/copy နှင့် social metadata ကို Gemini ဖြင့် ထုတ်သည်။"""
+    if not SAVED_API_KEY:
+        return {
+            "thumb_text": "မယုံနိုင်စရာ ဇာတ်လမ်း",
+            "title": "မယုံနိုင်စရာ ဇာတ်လမ်းတစ်ပုဒ်",
+            "description": "ဒီဗီဒီယိုထဲက စိတ်ဝင်စားစရာအဖြစ်အပျက်ကို အဆုံးထိကြည့်လိုက်ပါ။",
+            "hashtags": ["#MovieRecap", "#မြန်မာ", "#ဇာတ်လမ်း", "#TikTokMyanmar", "#Viral"],
+            "tags": ["movie recap", "မြန်မာဇာတ်လမ်း", "movie summary", "ဗီဒီယို", "ဇာတ်ကား", "အံ့သြဖွယ်", "suspense", "viral video", "tiktok", "youtube"],
+        }
+    prompt = f"""
+Analyze this Burmese movie recap script and return ONLY valid JSON with exactly these keys:
+thumb_text, title, description, hashtags, tags.
+Write natural, catchy Burmese for TikTok, YouTube, and Facebook.
+thumb_text: 3-8 Burmese words, highly clickable but truthful.
+title: one compelling Burmese title.
+description: 2-3 short sentences.
+hashtags: exactly 5 hashtag strings.
+tags: exactly 10 short tag strings.
+Do not include markdown or explanations.
+
+SCRIPT:
+{text[:12000]}
+"""
+    client = genai.Client(api_key=SAVED_API_KEY)
+    last_error = None
+    for model_name in GEMINI_MODELS:
+        try:
+            response = client.models.generate_content(model=model_name, contents=prompt)
+            raw = (response.text or "").strip().replace("```json", "").replace("```", "").strip()
+            data = json.loads(raw)
+            data["hashtags"] = list(data.get("hashtags", []))[:5]
+            data["tags"] = list(data.get("tags", []))[:10]
+            return data
+        except Exception as exc:
+            last_error = exc
+    print("Thumbnail metadata error:", last_error)
+    return {
+        "thumb_text": "စိတ်ဝင်စားဖွယ် ဇာတ်လမ်း",
+        "title": "စိတ်ဝင်စားဖွယ် ဇာတ်လမ်းတစ်ပုဒ်",
+        "description": "ဒီဇာတ်လမ်းထဲက အဖြစ်အပျက်ကို အဆုံးထိ ကြည့်ရှုလိုက်ပါ။",
+        "hashtags": ["#MovieRecap", "#မြန်မာ", "#ဇာတ်လမ်း", "#TikTokMyanmar", "#Viral"],
+        "tags": ["movie recap", "မြန်မာဇာတ်လမ်း", "movie summary", "ဇာတ်ကား", "suspense", "viral", "tiktok", "youtube", "facebook", "မြန်မာ"],
+    }
+
+def _font_path():
+    try:
+        path = subprocess.check_output(
+            ["fc-match", "-f", "%{file}", "Noto Sans Myanmar"], text=True
+        ).strip()
+        if path and os.path.exists(path):
+            return path
+    except Exception:
+        pass
+    return "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+def _wrap_thumbnail_text(draw, text, font, max_width):
+    words = str(text or "").split()
+    lines, current = [], ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and draw.textbbox((0, 0), candidate, font=font)[2] > max_width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines or [str(text or "").strip()]
+
+def create_thumbnail_from_video(video_path, script_text, ratio, resolution):
+    if not video_path or not os.path.exists(video_path):
+        raise ValueError("Thumbnail ထုတ်ရန် Video File တင်ပေးပါ။")
+    sizes = {
+        "1:1": (1, 1), "3:4": (3, 4), "16:9": (16, 9), "9:16": (9, 16)
+    }
+    scale_map = {"1080p": 1080, "2K": 1440, "4K": 2160, "8K": 4320}
+    rw, rh = sizes.get(ratio, sizes["16:9"])
+    short_side = scale_map.get(resolution, 1080)
+    if ratio == "16:9": width, height = round(short_side * 16 / 9), short_side
+    elif ratio == "9:16": width, height = short_side, round(short_side * 16 / 9)
+    elif ratio == "3:4": width, height = round(short_side * 3 / 4), short_side
+    else: width, height = short_side, short_side
+    duration = get_video_duration(video_path) or 1
+    temp_frames = []
+    best_frame, best_score = None, -1
+    for index, fraction in enumerate((0.18, 0.38, 0.58, 0.78, 0.90)):
+        frame_path = os.path.abspath(f"thumb_frame_{int(time.time())}_{index}.jpg")
+        subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(duration * fraction), "-i", video_path,
+             "-frames:v", "1", "-vf", "scale=1280:-2", frame_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120
+        )
+        if os.path.exists(frame_path):
+            temp_frames.append(frame_path)
+            image = Image.open(frame_path).convert("RGB")
+            edge_score = ImageStat.Stat(image.filter(ImageFilter.FIND_EDGES).convert("L")).var[0]
+            color_score = ImageStat.Stat(ImageEnhance.Color(image).enhance(1.5)).mean
+            score = edge_score + sum(color_score) * 0.15
+            if score > best_score:
+                best_score, best_frame = score, image.copy()
+    for frame_path in temp_frames:
+        try: os.remove(frame_path)
+        except OSError: pass
+    if best_frame is None:
+        raise RuntimeError("Video ထဲမှ thumbnail frame မထုတ်နိုင်ပါ။")
+
+    metadata = thumbnail_metadata(script_text or "")
+    canvas = ImageOps.fit(best_frame, (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.45))
+    canvas = ImageEnhance.Color(canvas).enhance(1.35)
+    canvas = ImageEnhance.Contrast(canvas).enhance(1.12)
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    odraw = ImageDraw.Draw(overlay)
+    for y in range(height):
+        alpha = int(170 * (y / max(1, height)))
+        odraw.line((0, y, width, y), fill=(5, 8, 25, alpha))
+    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay)
+    draw = ImageDraw.Draw(canvas)
+    font_path = _font_path()
+    title_font = ImageFont.truetype(font_path, max(32, int(min(width, height) * 0.085)))
+    small_font = ImageFont.truetype(font_path, max(22, int(min(width, height) * 0.035)))
+    lines = _wrap_thumbnail_text(draw, metadata.get("thumb_text", "မယုံနိုင်စရာ ဇာတ်လမ်း"), title_font, int(width * 0.86))
+    line_heights = [draw.textbbox((0, 0), line, font=title_font)[3] for line in lines]
+    total_h = sum(line_heights) + (len(lines) - 1) * 12
+    y = int(height * 0.72 - total_h / 2)
+    for line, line_h in zip(lines, line_heights):
+        box = draw.textbbox((0, 0), line, font=title_font, stroke_width=4)
+        x = (width - (box[2] - box[0])) // 2
+        draw.text((x + 4, y + 6), line, font=title_font, fill=(0, 0, 0, 210), stroke_width=6, stroke_fill=(0, 0, 0, 220))
+        draw.text((x, y), line, font=title_font, fill=(255, 239, 65, 255), stroke_width=2, stroke_fill=(225, 35, 65, 255))
+        y += line_h + 12
+    badge = "AI MOVIE RECAP"
+    draw.rounded_rectangle((int(width * .04), int(height * .04), int(width * .42), int(height * .11)), radius=18, fill=(235, 42, 80, 235))
+    draw.text((int(width * .06), int(height * .055)), badge, font=small_font, fill=(255, 255, 255, 255))
+    out_path = os.path.abspath(f"thumbnail_{ratio.replace(':','x')}_{resolution}_{int(time.time())}.jpg")
+    canvas.convert("RGB").save(out_path, "JPEG", quality=95, subsampling=0, optimize=True)
+    return out_path, metadata
+
+def tab4_thumbnail(video_file, script_text, ratio, resolution):
+    try:
+        path, metadata = create_thumbnail_from_video(video_file, script_text, ratio, resolution)
+        hashtags = " ".join(metadata.get("hashtags", [])[:5])
+        tags = ", ".join(metadata.get("tags", [])[:10])
+        info = f"**Title:** {metadata.get('title','')}\n\n**Description:** {metadata.get('description','')}\n\n**Hashtags (5):** {hashtags}\n\n**Tags (10):** {tags}"
+        return path, info
+    except Exception as exc:
+        return None, f"❌ Thumbnail Error: {exc}"
 
 def render_tab3_video(video_path, fallback_video_path, audio_mode, audio_file,
                       original_volume, audio_volume, zoom, brightness, contrast,
@@ -695,6 +845,34 @@ with gr.Blocks(title=APP_TITLE) as demo:
                 outputs=[v2_input_text, v2_translate_status],
             )
             v2_btn.click(tab2_tts, inputs=[v2_input_text, v2_voice, v2_speed], outputs=[v2_audio, v2_mp3, v2_srt, v2_zip])
+
+        # --- TAB 4: THUMBNAIL + SOCIAL METADATA ---
+        with gr.TabItem("4️⃣ Auto Thumbnail", id="tab_thumbnail"):
+            gr.Markdown("### 🖼️ Video ထည့်လိုက်သည်နှင့် စိတ်ဝင်စားဖွယ် Thumbnail နှင့် Social Metadata Auto ထုတ်မည်")
+            with gr.Row():
+                with gr.Column(scale=1):
+                    t4_video = gr.Video(label="📹 Thumbnail ထုတ်မည့် Video")
+                    t4_script = gr.Textbox(
+                        label="📝 Optional Script (မထည့်လည်း ရပါသည်)",
+                        placeholder="Tab 1 မှ Script ကို ဒီမှာ paste လုပ်နိုင်ပါသည်...",
+                        lines=7,
+                    )
+                    t4_ratio = gr.Radio(["1:1", "3:4", "16:9", "9:16"], value="16:9", label="📐 Thumbnail Ratio")
+                    t4_resolution = gr.Dropdown(["1080p", "2K", "4K", "8K"], value="1080p", label="🖼️ Output Resolution")
+                    t4_btn = gr.Button("✨ Thumbnail + Title + Description ထုတ်မည်", variant="primary")
+                with gr.Column(scale=1):
+                    t4_image = gr.Image(label="✅ Auto Thumbnail", type="filepath")
+                    t4_metadata = gr.Markdown("Title / Description / Hashtags / Tags ရလဒ် ဒီမှာပေါ်ပါမယ်။")
+            t4_btn.click(
+                tab4_thumbnail,
+                inputs=[t4_video, t4_script, t4_ratio, t4_resolution],
+                outputs=[t4_image, t4_metadata],
+            )
+            t4_video.change(
+                tab4_thumbnail,
+                inputs=[t4_video, t4_script, t4_ratio, t4_resolution],
+                outputs=[t4_image, t4_metadata],
+            )
 
         # --- TAB 3: ONE CLIP VIDEO (Using gr.Video with absolute mask overlay) ---
         with gr.TabItem("3️⃣ One Clip Video", id="tab_one_clip"):
