@@ -1,12 +1,14 @@
 import gradio as gr
 import os
 import asyncio
-import uuid  # သီးသန့် ဖိုင်နာမည်များ ဖန်တီးရန်
+import uuid
 import google.generativeai as genai
 import edge_tts
 from moviepy.editor import VideoFileClip, AudioFileClip, CompositeVideoClip, ImageClip, TextClip, CompositeAudioClip, vfx
 
-# --- SRT Parser ---
+# -------------------------------------------------------------
+# ၁။ SRT Parser (အချိန်နှင့် စာသားများကို ခွဲထုတ်ရန်)
+# -------------------------------------------------------------
 def time_to_seconds(time_str):
     h, m, s = time_str.split(':')
     s, ms = s.split(',')
@@ -25,24 +27,32 @@ def parse_srt(srt_text):
                 parsed_data.append((time_to_seconds(start_str.strip()), time_to_seconds(end_str.strip()), text_lines))
     return parsed_data
 
-# --- TTS ---
+# -------------------------------------------------------------
+# ၂။ Text-to-Speech (အသံဖန်တီးရန်)
+# -------------------------------------------------------------
 async def generate_tts(text, voice_gender, output_audio_path):
     voice = "my-MM-ThihaNeural" if voice_gender == "ကျား" else "my-MM-NilarNeural"
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_audio_path)
     return output_audio_path
 
-# --- Main Video Processing ---
+# -------------------------------------------------------------
+# ၃။ Video Dubbing + Time Sync အဓိက Function
+# -------------------------------------------------------------
 async def process_video(api_key, voice_mode, voice_select, video_file, bgm_file, srt_text, logo_file,
                    font_select, color_select, aspect_ratio, preview_time, text_position,
                    font_size, blur_amount, add_subtitle, add_blur, logo_size, logo_x, logo_y):
     
+    # Error ဖြေရှင်းထားသော အပိုင်း (return အစား yield ကိုသာ အသုံးပြုထားပါသည်)
     if not api_key:
-        return "⚠️ Gemini API Key ထည့်ပါ။", None
+        yield "⚠️ Gemini API Key ထည့်ပါ။", None
+        return
     if not video_file:
-        return "⚠️ ဗီဒီယိုဖိုင် တင်ပါ။", None
+        yield "⚠️ ဗီဒီယိုဖိုင် တင်ပါ။", None
+        return
     if not srt_text.strip():
-        return "⚠️ SRT (ဇာတ်ညွှန်း) ထည့်ပါ။", None
+        yield "⚠️ SRT (ဇာတ်ညွှန်း) ထည့်ပါ။", None
+        return
 
     # User တစ်ဦးချင်းစီအတွက် သီးသန့် ID ဖန်တီးခြင်း (ဖိုင်နာမည်မထပ်စေရန်)
     session_id = str(uuid.uuid4())[:8]
@@ -123,8 +133,10 @@ async def process_video(api_key, voice_mode, voice_select, video_file, bgm_file,
     except Exception as e:
         yield f"❌ အမှားအယွင်းဖြစ်ပေါ်ခဲ့ပါသည်: {str(e)}", None
 
+# -------------------------------------------------------------
+# ၄။ Async Wrapper Function
+# -------------------------------------------------------------
 def run_async_process(*args):
-    import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     gen = process_video(*args)
@@ -138,13 +150,18 @@ def run_async_process(*args):
 def cancel_process():
     return "🛑 လုပ်ဆောင်မှုကို ရပ်တန့်လိုက်ပါပြီ။"
 
-# --- UI Setup ---
+# -------------------------------------------------------------
+# ၅။ UI (Frontend Setup)
+# -------------------------------------------------------------
 with gr.Blocks(title="ALL IN ONE Dubbing App", theme=gr.themes.Soft()) as app:
     gr.Markdown("<center><h1>🎬 ALL IN ONE (Safe Version)</h1></center>")
     
     with gr.Tab("🎬 Movie Dubbing"):
-        api_key = gr.Textbox(label="၁။ Gemini API Key", type="password")
+        gr.Markdown("ℹ️ **ဤစာမျက်နှာမှ ထွက်သွားပါကလည်း နောက်ကွယ်မှ ဆက်လက်အလုပ်လုပ်မည်ဖြစ်ပြီး ပြန်ဝင်လာပါက Auto-Resume ဖြစ်ပါမည်။**")
+        
+        api_key = gr.Textbox(label="၁။ Gemini API Key ထည့်ပါ", type="password")
         voice_mode = gr.Radio(["အသံတစ်မျိုးတည်း သုံးမည်", "ကျား/မ စုံတွဲအသံ သုံးမည်"], label="၂။ စကားပြော ပုံစံ", value="အသံတစ်မျိုးတည်း သုံးမည်")
+        
         with gr.Row():
             voice_select = gr.Dropdown(["တိုင်းကျော် (ကျား)", "ရွှေစင် (မ)"], label="အသံ ရွေးချယ်ရန်", value="တိုင်းကျော် (ကျား)")
             
@@ -175,12 +192,13 @@ with gr.Blocks(title="ALL IN ONE Dubbing App", theme=gr.themes.Soft()) as app:
             logo_x = gr.Slider(-100, 100, 0, label="Logo ဘယ်/ညာ (%)")
             logo_y = gr.Slider(-100, 100, 14, label="Logo အပေါ်/အောက် (%)")
         
-        generate_btn = gr.Button("🚀 ၅။ ဖန်တီးမည်", variant="primary")
+        generate_btn = gr.Button("🚀 ၅။ ဖန်တီးမည် (Generate)", variant="primary")
         cancel_btn = gr.Button("🛑 ရပ်တန့်မည်", variant="stop")
         
-        status_box = gr.Textbox(label="အခြေအနေ (Status)", interactive=False)
+        status_box = gr.Textbox(label="အခြေအနေ (Status)", interactive=False, lines=3)
         video_result = gr.Video(label="📹 Video Result")
 
+    # Button Events ချိတ်ဆက်ခြင်း
     generate_btn.click(
         fn=run_async_process, 
         inputs=[api_key, voice_mode, voice_select, video_upload, bgm_upload, srt_input, logo_upload,
@@ -190,8 +208,11 @@ with gr.Blocks(title="ALL IN ONE Dubbing App", theme=gr.themes.Soft()) as app:
     )
     cancel_btn.click(fn=cancel_process, outputs=status_box)
 
+# -------------------------------------------------------------
+# ၆။ Render & Server Setup
+# -------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    # Queue စနစ်ကို ဖွင့်ထားမှသာ လူများပြိုင်တူသုံးသည့်အခါ အဆင်ပြေမည်ဖြစ်သည်
+    # Queue စနစ် ဖွင့်ထားခြင်း (Timeout နှင့် ပြိုင်တူအသုံးပြုမှုများအတွက်)
     app.queue(default_concurrency_limit=2)
     app.launch(server_name="0.0.0.0", server_port=port)
