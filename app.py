@@ -2,7 +2,6 @@ import gradio as gr
 import os
 import asyncio
 import uuid
-import google.generativeai as genai
 import edge_tts
 from moviepy.editor import VideoFileClip, AudioFileClip, CompositeVideoClip, ImageClip, TextClip, CompositeAudioClip, vfx
 
@@ -28,13 +27,19 @@ def parse_srt(srt_text):
     return parsed_data
 
 # -------------------------------------------------------------
-# ၂။ Text-to-Speech (အသံဖန်တီးရန်)
+# ၂။ Text-to-Speech (အသံဖန်တီးရန် - Error ဖြေရှင်းပြီး)
 # -------------------------------------------------------------
 async def generate_tts(text, voice_gender, output_audio_path):
+    # မြန်မာအသံများအတွက် မှန်ကန်သော Voice Names များ
     voice = "my-MM-ThihaNeural" if voice_gender == "ကျား" else "my-MM-NilarNeural"
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_audio_path)
-    return output_audio_path
+    
+    try:
+        communicate = edge_tts.Communicate(text, voice)
+        await communicate.save(output_audio_path)
+        return output_audio_path
+    except Exception as e:
+        print(f"TTS Generation Error: {str(e)}")
+        raise e
 
 # -------------------------------------------------------------
 # ၃။ Video Dubbing + Time Sync အဓိက Function
@@ -43,15 +48,11 @@ async def process_video(api_key, voice_mode, voice_select, video_file, bgm_file,
                    font_select, color_select, aspect_ratio, preview_time, text_position,
                    font_size, blur_amount, add_subtitle, add_blur, logo_size, logo_x, logo_y):
     
-    # Error ဖြေရှင်းထားသော အပိုင်း (return အစား yield ကိုသာ အသုံးပြုထားပါသည်)
-    if not api_key:
-        yield "⚠️ Gemini API Key ထည့်ပါ။", None
-        return
     if not video_file:
-        yield "⚠️ ဗီဒီယိုဖိုင် တင်ပါ။", None
+        yield "⚠️ ကျေးဇူးပြု၍ ဗီဒီယိုဖိုင် တင်ပေးပါ။", None
         return
     if not srt_text.strip():
-        yield "⚠️ SRT (ဇာတ်ညွှန်း) ထည့်ပါ။", None
+        yield "⚠️ ကျေးဇူးပြု၍ SRT (ဇာတ်ညွှန်း) ထည့်ပေးပါ။", None
         return
 
     # User တစ်ဦးချင်းစီအတွက် သီးသန့် ID ဖန်တီးခြင်း (ဖိုင်နာမည်မထပ်စေရန်)
@@ -70,17 +71,19 @@ async def process_video(api_key, voice_mode, voice_select, video_file, bgm_file,
         yield f"စာကြောင်းရေ {len(parsed_srt)} ကြောင်းကို အသံပြောင်းလဲနေပါသည်...", None
         
         for index, (start_sec, end_sec, text) in enumerate(parsed_srt):
-            # Session ID ကိုသုံးပြီး သီးသန့် ဖိုင်နာမည်ပေးခြင်း
             temp_audio_path = f"temp_{session_id}_{index}.mp3"
+            
+            # အသံဖိုင်ထုတ်ယူခြင်း
             await generate_tts(text, gender, temp_audio_path)
             
-            audio_clip = AudioFileClip(temp_audio_path)
-            target_duration = end_sec - start_sec
-            
-            if audio_clip.duration > 0 and target_duration > 0:
-                speed_factor = audio_clip.duration / target_duration
-                synced_audio = audio_clip.fx(vfx.speedx, factor=speed_factor).set_start(start_sec)
-                audio_clips_list.append(synced_audio)
+            if os.path.exists(temp_audio_path):
+                audio_clip = AudioFileClip(temp_audio_path)
+                target_duration = end_sec - start_sec
+                
+                if audio_clip.duration > 0 and target_duration > 0:
+                    speed_factor = audio_clip.duration / target_duration
+                    synced_audio = audio_clip.fx(vfx.speedx, factor=speed_factor).set_start(start_sec)
+                    audio_clips_list.append(synced_audio)
             
             if add_subtitle:
                 txt_color = 'yellow' if 'အဝါ' in color_select else 'white'
@@ -115,7 +118,6 @@ async def process_video(api_key, voice_mode, voice_select, video_file, bgm_file,
             
         final_video = CompositeVideoClip(clips_to_composite)
         
-        # သီးသန့် Video output ဖိုင်နာမည်
         output_video_path = f"final_output_{session_id}.mp4"
         yield "ဗီဒီယိုကို Export လုပ်နေပါသည်... (ခဏစောင့်ပါ)", None
         
@@ -159,7 +161,7 @@ with gr.Blocks(title="ALL IN ONE Dubbing App", theme=gr.themes.Soft()) as app:
     with gr.Tab("🎬 Movie Dubbing"):
         gr.Markdown("ℹ️ **ဤစာမျက်နှာမှ ထွက်သွားပါကလည်း နောက်ကွယ်မှ ဆက်လက်အလုပ်လုပ်မည်ဖြစ်ပြီး ပြန်ဝင်လာပါက Auto-Resume ဖြစ်ပါမည်။**")
         
-        api_key = gr.Textbox(label="၁။ Gemini API Key ထည့်ပါ", type="password")
+        api_key = gr.Textbox(label="၁။ Gemini API Key ထည့်ပါ (Optional)", type="password")
         voice_mode = gr.Radio(["အသံတစ်မျိုးတည်း သုံးမည်", "ကျား/မ စုံတွဲအသံ သုံးမည်"], label="၂။ စကားပြော ပုံစံ", value="အသံတစ်မျိုးတည်း သုံးမည်")
         
         with gr.Row():
@@ -213,6 +215,5 @@ with gr.Blocks(title="ALL IN ONE Dubbing App", theme=gr.themes.Soft()) as app:
 # -------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    # Queue စနစ် ဖွင့်ထားခြင်း (Timeout နှင့် ပြိုင်တူအသုံးပြုမှုများအတွက်)
     app.queue(default_concurrency_limit=2)
     app.launch(server_name="0.0.0.0", server_port=port)
