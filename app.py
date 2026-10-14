@@ -102,7 +102,6 @@ async def process_advanced_video(
             
             # ၃။ မူရင်းစာသားဖုံးရန် (Blur / Dark Shield) Box ဖန်တီးခြင်း
             if blur_height > 0:
-                # စာတန်းပေါ်မည့် နေရာတစ်ဝိုက်တွင် အရောင်မှိုင်း သို့မဟုတ် အမည်းရောင် ဖုံးအုပ်ပေးခြင်း
                 blur_box = (ColorClip(size=(int(video.w * 0.95), int(blur_height)), color=(0, 0, 0))
                             .set_opacity(blur_opacity)
                             .set_start(start_sec)
@@ -110,7 +109,7 @@ async def process_advanced_video(
                             .set_position(('center', (text_position / 100.0)), relative=True))
                 blur_clips_list.append(blur_box)
 
-            # ၄။ စာတန်းထိုး (Subtitle Clip) ဖန်တီးခြင်း (စာလုံးအရွယ်အစား ချိန်ညှိနိုင်သည်)
+            # ၄။ စာတန်းထိုး (Subtitle Clip) ဖန်တီးခြင်း
             txt_clip = (TextClip(text, fontsize=font_size, color=txt_col, font='Arial', method='caption', size=(video.w * 0.9, None))
                         .set_start(start_sec)
                         .set_end(end_sec)
@@ -175,7 +174,6 @@ def run_async_process(*args):
 # -------------------------------------------------------------
 with gr.Blocks(title="Pro Auto Video Dubbing Studio", theme=gr.themes.Soft()) as app:
     gr.Markdown("<center><h1>🎬 Pro Auto Video Dubbing, Subtitle & Copyright Shield Studio</h1></center>")
-    gr.Markdown("<p align='center'>မူရင်းအသံဖျောက်ခြင်း၊ Thiha/Nilar အသံများဖြင့် အော်တိုဒါဘင်းလုပ်ခြင်း၊ မူရင်းစာသားဖုံးရန် Blur Box ထည့်ခြင်းနှင့် ဗီဒီယိုဘယ်/ညာလှန်ခြင်းများ အစုံအလင်ပါဝင်သည်။</p>")
     
     with gr.Row():
         dialogue_mode = gr.Radio(
@@ -208,7 +206,7 @@ with gr.Blocks(title="Pro Auto Video Dubbing Studio", theme=gr.themes.Soft()) as
     srt_input = gr.Textbox(
         label="📝 SRT ဇာတ်ညွှန်းထည့်ရန် [Format: 00:00:01,000 --> 00:00:03,000]", 
         lines=6,
-        placeholder="ဥပမာ -\n1\n00:00:01,000 --> 00:00:03,000\nမင်္ဂလာပါ ဒီနေ့ ဘာတွေလုပ်ကြမလဲ။\n\n2\n00:00:03,500 --> 00:00:06,000\nငါတို့ ဒီနေ့ ပရောဂျက်အသစ် စလုပ်ကြမယ်လေ။"
+        placeholder="ဥပမာ -\n1\n00:00:01,000 --> 00:00:03,000\nမင်္ဂလာပါ ဒီနေ့ ဘာတွေလုပ်ကြမလဲ။"
     )
     
     generate_btn = gr.Button("🚀 အပြည့်အစုံဖြင့် ဗီဒီယို အပြီးသတ်ထုတ်မည် (Generate)", variant="primary")
@@ -226,9 +224,6 @@ with gr.Blocks(title="Pro Auto Video Dubbing Studio", theme=gr.themes.Soft()) as
         outputs=[status_box, video_result]
     )
 
-# -------------------------------------------------------------
-# ၆။ Server Setup
-# -------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     app.queue(default_concurrency_limit=2)
